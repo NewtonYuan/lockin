@@ -8,7 +8,13 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private var lastForegroundPackage: String? = null
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val eventType = event?.eventType ?: return
+        if (
+            eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            eventType != AccessibilityEvent.TYPE_VIEW_CLICKED
+        ) {
+            return
+        }
 
         val packageName = event.packageName?.toString() ?: return
 
@@ -18,6 +24,8 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
         if (packageName != INSTAGRAM_PACKAGE_NAME) return
         if (promptActive || isInstagramAllowed()) return
+        if (eventType != AccessibilityEvent.TYPE_VIEW_CLICKED) return
+        if (!isReelsClick(event)) return
 
         promptActive = true
         startActivity(
@@ -35,8 +43,27 @@ class AppGuardAccessibilityService : AccessibilityService() {
         return System.currentTimeMillis() < instagramAllowedUntilMillis
     }
 
+    private fun isReelsClick(event: AccessibilityEvent): Boolean {
+        val clickedLabel = buildString {
+            event.text.forEach { append(' ').append(it) }
+            append(' ').append(event.contentDescription?.toString().orEmpty())
+        }.trim()
+
+        if (clickedLabel.equals("reels", ignoreCase = true)) return true
+
+        return REELS_CLICK_CLUES.any { clue ->
+            clickedLabel.contains(clue, ignoreCase = true)
+        }
+    }
+
     companion object {
         const val INSTAGRAM_PACKAGE_NAME = "com.instagram.android"
+        private val REELS_CLICK_CLUES = listOf(
+            "reels tab",
+            "reels button",
+            "open reels",
+        )
+
         @Volatile
         private var promptActive = false
 
