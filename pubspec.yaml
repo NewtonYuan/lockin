@@ -68,6 +68,10 @@ flutter:
     - assets/icons/timer.svg
     - assets/icons/statistics.svg
     - assets/icons/settings.svg
+    - assets/icons/app_icon.svg
+    - assets/icons/construction.svg
+    - assets/icons/share.svg
+    - assets/icons/notifications.svg
 
   # To add assets to your application, add an assets section, like this:
   # assets:

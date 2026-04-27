@@ -1,13 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+
+import '../brand.dart';
+import 'sticky_header.dart';
 
 class StatisticsTab extends StatelessWidget {
-  const StatisticsTab({super.key});
+  const StatisticsTab({
+    super.key,
+    required this.onBackToHome,
+  });
+
+  final VoidCallback onBackToHome;
 
   @override
   Widget build(BuildContext context) {
-    return const _PlaceholderTab(
+    return _PlaceholderTab(
       title: 'Statistics',
-      message: 'Weekly trends, streaks, and saved time will live here.',
+      onBack: onBackToHome,
     );
   }
 }
@@ -15,44 +24,59 @@ class StatisticsTab extends StatelessWidget {
 class _PlaceholderTab extends StatelessWidget {
   const _PlaceholderTab({
     required this.title,
-    required this.message,
+    required this.onBack,
   });
 
   final String title;
-  final String message;
+  final VoidCallback onBack;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
+    return CustomScrollView(
+      slivers: [
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+        StickyHeaderSliver(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: StickyTitleHeader(
+              title: title,
+              onBack: onBack,
+              centerTitle: false,
             ),
           ),
-          Expanded(
+        ),
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 18, 24, 24),
             child: Center(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 18),
-                child: Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: const Color(0xFFD8DCE2),
-                    height: 1.35,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SvgPicture.asset(
+                    'assets/icons/construction.svg',
+                    width: 72,
+                    height: 72,
+                    colorFilter: const ColorFilter.mode(
+                      appText,
+                      BlendMode.srcIn,
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Coming Soon!',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: appText,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

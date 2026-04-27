@@ -72,7 +72,7 @@ class ConfirmInstagramActivity : Activity() {
                     minHeight = dp(48)
                     setOnClickListener {
                         AppGuardAccessibilityService.dismissPrompt()
-                        goHome()
+                        AppGuardAccessibilityService.returnToPreviousPageAfterPrompt()
                         finish()
                     }
                 },
@@ -163,15 +163,6 @@ class ConfirmInstagramActivity : Activity() {
             60 -> "1 hour"
             else -> "$minutes minutes"
         }
-    }
-
-    private fun goHome() {
-        startActivity(
-            Intent(Intent.ACTION_MAIN).apply {
-                addCategory(Intent.CATEGORY_HOME)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            },
-        )
     }
 
     override fun onDestroy() {

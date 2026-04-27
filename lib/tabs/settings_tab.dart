@@ -1,58 +1,240 @@
 import 'package:flutter/material.dart';
 
-class SettingsTab extends StatelessWidget {
-  const SettingsTab({super.key});
+import '../brand.dart';
+import 'sticky_header.dart';
+
+class SettingsTab extends StatefulWidget {
+  const SettingsTab({
+    super.key,
+    required this.onBackToHome,
+    required this.onOpenAccessibilitySettings,
+    required this.onOpenUsageAccessSettings,
+    required this.isAccessibilityAllowed,
+    required this.isUsageAccessAllowed,
+  });
+
+  final VoidCallback onBackToHome;
+  final VoidCallback onOpenAccessibilitySettings;
+  final VoidCallback onOpenUsageAccessSettings;
+  final bool isAccessibilityAllowed;
+  final bool isUsageAccessAllowed;
 
   @override
+  State<SettingsTab> createState() => _SettingsTabState();
+}
+
+class _SettingsTabState extends State<SettingsTab> {
+  @override
   Widget build(BuildContext context) {
-    return const _PlaceholderTab(
-      title: 'Settings',
-      message:
-          'Controls for reminders, blocked flows, and quiet hours will live here.',
+    return CustomScrollView(
+      slivers: [
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+        StickyHeaderSliver(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: StickyTitleHeader(
+              title: 'Settings',
+              onBack: widget.onBackToHome,
+              centerTitle: false,
+            ),
+          ),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+          sliver: SliverList(
+            delegate: SliverChildListDelegate([
+              const _SettingsGroup(
+                title: 'Subscription',
+                children: [
+                  _SettingsRow(
+                    icon: Icons.confirmation_number_outlined,
+                    title: 'Enter Code',
+                    value: '',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _SettingsGroup(
+                title: 'Permissions',
+                children: [
+                  _SettingsRow(
+                    icon: Icons.accessibility_new_rounded,
+                    title: 'Accessibility',
+                    value: widget.isAccessibilityAllowed
+                        ? 'Allowed'
+                        : 'Denied',
+                    onTap: widget.onOpenAccessibilitySettings,
+                  ),
+                  _SettingsRow(
+                    icon: Icons.query_stats_rounded,
+                    title: 'Usage Access',
+                    value: widget.isUsageAccessAllowed ? 'Allowed' : 'Denied',
+                    onTap: widget.onOpenUsageAccessSettings,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const _SettingsGroup(
+                title: 'App',
+                children: [
+                  _SettingsRow(
+                    icon: Icons.share_rounded,
+                    title: 'Share with Friends',
+                    value: '',
+                  ),
+                  _SettingsRow(
+                    icon: Icons.rate_review_outlined,
+                    title: 'Leave a Review',
+                    value: '',
+                  ),
+                  _SettingsRow(
+                    icon: Icons.info_outline_rounded,
+                    title: 'Version',
+                    value: '0.1.0',
+                    showChevron: false,
+                  ),
+                ],
+              ),
+            ]),
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _PlaceholderTab extends StatelessWidget {
-  const _PlaceholderTab({
+class _SettingsGroup extends StatelessWidget {
+  const _SettingsGroup({
     required this.title,
-    required this.message,
+    required this.children,
   });
 
   final String title;
-  final String message;
+  final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(2, 0, 2, 8),
+          child: Text(
             title,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: appMutedText,
+              fontWeight: FontWeight.w800,
             ),
           ),
-          Expanded(
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 18),
+        ),
+        Material(
+          color: appSurface,
+          borderRadius: BorderRadius.circular(8),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Column(
+              children: [
+                for (var index = 0; index < children.length; index++) ...[
+                  children[index],
+                  if (index < children.length - 1)
+                    const Divider(
+                      height: 1,
+                      thickness: 1,
+                      indent: 52,
+                      color: appBorder,
+                    ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SettingsRow extends StatelessWidget {
+  const _SettingsRow({
+    required this.icon,
+    required this.title,
+    required this.value,
+    this.trailing,
+    this.onTap,
+    this.showChevron = true,
+  });
+
+  final IconData icon;
+  final String title;
+  final String value;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+  final bool showChevron;
+  static const double _rowHeight = 56;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      splashColor: brand.withValues(alpha: 0.14),
+      highlightColor: appText.withValues(alpha: 0.04),
+      child: SizedBox(
+        height: _rowHeight,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Icon(icon, color: appMutedText, size: 24),
+              const SizedBox(width: 16),
+              Expanded(
                 child: Text(
-                  message,
-                  textAlign: TextAlign.center,
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.visible,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: const Color(0xFFD8DCE2),
-                    height: 1.35,
+                    color: appText,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
-            ),
+              const SizedBox(width: 12),
+              if (trailing != null)
+                trailing!
+              else ...[
+                SizedBox(
+                  width: showChevron ? 88 : 104,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          value,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.right,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(
+                                color: appMutedText,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                      ),
+                      if (showChevron) ...[
+                        const SizedBox(width: 4),
+                        const Icon(
+                          Icons.chevron_right_rounded,
+                          color: appMutedText,
+                          size: 20,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
