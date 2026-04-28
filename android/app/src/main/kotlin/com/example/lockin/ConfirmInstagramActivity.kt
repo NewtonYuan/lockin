@@ -22,6 +22,11 @@ class ConfirmInstagramActivity : Activity() {
         setContentView(createConfirmationView())
     }
 
+    @Deprecated("Back is intentionally disabled for this blocking prompt")
+    override fun onBackPressed() {
+        // Intentionally no-op. Exit paths should go through the prompt actions.
+    }
+
     private fun createConfirmationView(): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL

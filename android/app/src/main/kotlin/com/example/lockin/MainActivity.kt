@@ -11,6 +11,8 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.util.Calendar
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     private val trackedDailyTimeLimitKeys = listOf(
@@ -90,6 +92,20 @@ class MainActivity : FlutterActivity() {
                 }
                 "getSavedBlockConfig" -> {
                     result.success(getSavedBlockConfig())
+                }
+                "setBlockedWebsites" -> {
+                    val blockedWebsites =
+                        call.argument<List<Map<String, Any?>>>("blockedWebsites")
+                    if (blockedWebsites == null) {
+                        result.error(
+                            "missing_blocked_websites",
+                            "blockedWebsites is required",
+                            null,
+                        )
+                    } else {
+                        setBlockedWebsites(blockedWebsites)
+                        result.success(null)
+                    }
                 }
                 "getInstalledTrackedPackages" -> {
                     result.success(getInstalledTrackedPackages())
@@ -205,10 +221,44 @@ class MainActivity : FlutterActivity() {
         val blockSettings = trackedBlockSettingKeys.associateWith { key ->
             prefs.getBoolean(key, false)
         }
+        val blockedWebsites = getBlockedWebsites()
 
         return mapOf(
             "dailyTimeLimits" to dailyTimeLimits,
             "blockSettings" to blockSettings,
+            "blockedWebsites" to blockedWebsites,
         )
+    }
+
+    private fun setBlockedWebsites(blockedWebsites: List<Map<String, Any?>>) {
+        val serialized = JSONArray().apply {
+            blockedWebsites.forEach { website ->
+                put(
+                    JSONObject().apply {
+                        put("domain", website["domain"] as? String ?: "")
+                        put("blockedSince", website["blockedSince"] as? Long ?: 0L)
+                    },
+                )
+            }
+        }.toString()
+
+        getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString("blocked_websites", serialized)
+            .apply()
+    }
+
+    private fun getBlockedWebsites(): List<Map<String, Any>> {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        val serialized = prefs.getString("blocked_websites", null) ?: return emptyList()
+        val jsonArray = JSONArray(serialized)
+
+        return List(jsonArray.length()) { index ->
+            val entry = jsonArray.getJSONObject(index)
+            mapOf(
+                "domain" to entry.optString("domain"),
+                "blockedSince" to entry.optLong("blockedSince"),
+            )
+        }
     }
 }

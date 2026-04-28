@@ -54,13 +54,9 @@ class _PlaceholderTab extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   SvgPicture.asset(
-                    'assets/icons/construction.svg',
-                    width: 72,
-                    height: 72,
-                    colorFilter: const ColorFilter.mode(
-                      appText,
-                      BlendMode.srcIn,
-                    ),
+                    'assets/images/statistics_coming_soon.svg',
+                    width: 220,
+                    height: 220,
                   ),
                   const SizedBox(height: 14),
                   Text(

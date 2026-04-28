@@ -5,6 +5,16 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../brand.dart';
 import 'sticky_header.dart';
 
+class BlockedWebsiteEntry {
+  const BlockedWebsiteEntry({
+    required this.domain,
+    required this.blockedSince,
+  });
+
+  final String domain;
+  final DateTime blockedSince;
+}
+
 class BlockScreen extends StatelessWidget {
   const BlockScreen({
     super.key,
@@ -12,8 +22,11 @@ class BlockScreen extends StatelessWidget {
     required this.selectedCategory,
     required this.expandedApps,
     required this.installedPackageNames,
+    required this.blockedWebsites,
     required this.dailyTimeLimits,
     required this.blockSettings,
+    required this.onAddWebsite,
+    required this.onDeleteWebsite,
     required this.onSelectCategory,
     required this.onToggleExpanded,
     required this.onToggleSetting,
@@ -24,8 +37,11 @@ class BlockScreen extends StatelessWidget {
   final String selectedCategory;
   final Set<String> expandedApps;
   final Set<String>? installedPackageNames;
+  final List<BlockedWebsiteEntry> blockedWebsites;
   final Map<String, int?> dailyTimeLimits;
   final Map<String, bool> blockSettings;
+  final ValueChanged<String> onAddWebsite;
+  final ValueChanged<BlockedWebsiteEntry> onDeleteWebsite;
   final ValueChanged<String> onSelectCategory;
   final ValueChanged<String> onToggleExpanded;
   final void Function(String settingKey, bool value) onToggleSetting;
@@ -68,24 +84,15 @@ class BlockScreen extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               if (selectedCategory == 'Websites')
-                const _OverviewCard(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 28),
-                    child: Text(
-                      'Website blocking controls will live here.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: appMutedText,
-                        fontSize: 16,
-                        height: 1.35,
-                      ),
-                    ),
-                  ),
+                _WebsiteBlockPanel(
+                  blockedWebsites: blockedWebsites,
+                  onAddWebsite: onAddWebsite,
+                  onDeleteWebsite: onDeleteWebsite,
                 )
               else ...[
                 _AppBlockCard(
                   appName: 'Instagram',
-                  iconAssetPath: 'assets/icons/instagram.png',
+                  iconAssetPath: 'assets/apps/instagram.svg',
                   isInstalled: _isPackageInstalled(
                     'com.instagram.android',
                   ),
@@ -116,7 +123,7 @@ class BlockScreen extends StatelessWidget {
                 const SizedBox(height: 14),
                 _AppBlockCard(
                   appName: 'YouTube',
-                  iconAssetPath: 'assets/icons/youtube.png',
+                  iconAssetPath: 'assets/apps/youtube.svg',
                   isInstalled: _isAnyPackageInstalled(
                     exactPackageNames: ['com.google.android.youtube'],
                     packagePrefixes: ['app.revanced.android.youtube'],
@@ -143,7 +150,7 @@ class BlockScreen extends StatelessWidget {
                 const SizedBox(height: 14),
                 _AppBlockCard(
                   appName: 'TikTok',
-                  iconAssetPath: 'assets/icons/tiktok.png',
+                  iconAssetPath: 'assets/apps/tiktok.svg',
                   isInstalled: _isPackageInstalled(
                     'com.zhiliaoapp.musically',
                   ),
@@ -164,7 +171,7 @@ class BlockScreen extends StatelessWidget {
                 const SizedBox(height: 14),
                 _AppBlockCard(
                   appName: 'Snapchat',
-                  iconAssetPath: 'assets/icons/snapchat.png',
+                  iconAssetPath: 'assets/apps/snapchat.svg',
                   isInstalled: _isPackageInstalled(
                     'com.snapchat.android',
                   ),
@@ -185,7 +192,7 @@ class BlockScreen extends StatelessWidget {
                 const SizedBox(height: 14),
                 _AppBlockCard(
                   appName: 'Facebook',
-                  iconAssetPath: 'assets/icons/facebook.png',
+                  iconAssetPath: 'assets/apps/facebook.jpg',
                   isInstalled: _isPackageInstalled(
                     'com.facebook.katana',
                   ),
@@ -227,6 +234,293 @@ class BlockScreen extends StatelessWidget {
           packagePrefixes.any((prefix) => packageName.startsWith(prefix)),
     );
   }
+}
+
+class _WebsiteBlockPanel extends StatelessWidget {
+  const _WebsiteBlockPanel({
+    required this.blockedWebsites,
+    required this.onAddWebsite,
+    required this.onDeleteWebsite,
+  });
+
+  final List<BlockedWebsiteEntry> blockedWebsites;
+  final ValueChanged<String> onAddWebsite;
+  final ValueChanged<BlockedWebsiteEntry> onDeleteWebsite;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _WebsiteEntryCard(
+          onAddWebsite: onAddWebsite,
+        ),
+        const SizedBox(height: 14),
+        _BlockedWebsitesCard(
+          blockedWebsites: blockedWebsites,
+          onDeleteWebsite: onDeleteWebsite,
+        ),
+      ],
+    );
+  }
+}
+
+class _WebsiteEntryCard extends StatefulWidget {
+  const _WebsiteEntryCard({
+    required this.onAddWebsite,
+  });
+
+  final ValueChanged<String> onAddWebsite;
+
+  @override
+  State<_WebsiteEntryCard> createState() => _WebsiteEntryCardState();
+}
+
+class _WebsiteEntryCardState extends State<_WebsiteEntryCard> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submitWebsite() {
+    final value = _controller.text.trim();
+    if (value.isEmpty) return;
+    widget.onAddWebsite(value);
+    _controller.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: appSurface,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.language_rounded,
+              color: appMutedText,
+              size: 22,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.only(bottom: 2),
+                decoration: const BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(
+                      color: appBorder,
+                      width: 1,
+                    ),
+                  ),
+                ),
+                child: TextField(
+                  controller: _controller,
+                  onSubmitted: (_) => _submitWebsite(),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'Enter website URL',
+                    hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: appMutedText,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    border: InputBorder.none,
+                  ),
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: appText,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            IconButton(
+              onPressed: _submitWebsite,
+              style: IconButton.styleFrom(
+                backgroundColor: brand,
+                foregroundColor: Colors.white,
+                shape: const CircleBorder(),
+                minimumSize: const Size(40, 40),
+              ),
+              icon: const Icon(
+                Icons.add_rounded,
+                size: 22,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BlockedWebsitesCard extends StatelessWidget {
+  const _BlockedWebsitesCard({
+    required this.blockedWebsites,
+    required this.onDeleteWebsite,
+  });
+
+  final List<BlockedWebsiteEntry> blockedWebsites;
+  final ValueChanged<BlockedWebsiteEntry> onDeleteWebsite;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: appSurface,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Blocked Websites',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: appText,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (blockedWebsites.isEmpty)
+              SizedBox(
+                width: double.infinity,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 10, 0, 18),
+                  child: Column(
+                    children: [
+                      SvgPicture.asset(
+                        'assets/images/through_the_park_empty.svg',
+                        width: 180,
+                        height: 180,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'No blocked websites yet.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: appMutedText,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              for (var index = 0; index < blockedWebsites.length; index++) ...[
+                _BlockedWebsiteRow(
+                  entry: blockedWebsites[index],
+                  onDelete: () => onDeleteWebsite(blockedWebsites[index]),
+                ),
+                if (index < blockedWebsites.length - 1)
+                  const Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: appBorder,
+                  ),
+              ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BlockedWebsiteRow extends StatelessWidget {
+  const _BlockedWebsiteRow({
+    required this.entry,
+    required this.onDelete,
+  });
+
+  final BlockedWebsiteEntry entry;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: appSurfaceStrong,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.public_rounded,
+              color: appMutedText,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.domain,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: appText,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _formatBlockedSince(entry.blockedSince),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: appMutedText,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onDelete,
+            icon: SvgPicture.asset(
+              'assets/icons/delete_forever.svg',
+              width: 24,
+              height: 24,
+              colorFilter: const ColorFilter.mode(
+                appMutedText,
+                BlendMode.srcIn,
+              ),
+            ),
+            splashRadius: 22,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatBlockedSince(DateTime blockedSince) {
+  const monthNames = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return 'Since ${monthNames[blockedSince.month - 1]} ${blockedSince.day}, ${blockedSince.year}';
 }
 
 class _CategoryTab extends StatelessWidget {
@@ -335,7 +629,9 @@ class _AppBlockCard extends StatelessWidget {
                           opacity: iconOpacity,
                           child: SizedBox.expand(
                             child: iconAssetPath != null
-                                ? Image.asset(iconAssetPath!, fit: BoxFit.fill)
+                                ? _BlockAppIcon(
+                                    assetPath: iconAssetPath!,
+                                  )
                                 : Center(
                                     child: Text(
                                       appName.substring(0, 1),
@@ -417,6 +713,28 @@ class _AppBlockCard extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+class _BlockAppIcon extends StatelessWidget {
+  const _BlockAppIcon({
+    required this.assetPath,
+  });
+
+  final String assetPath;
+
+  @override
+  Widget build(BuildContext context) {
+    if (assetPath.toLowerCase().endsWith('.svg')) {
+      return SvgPicture.asset(
+        assetPath,
+        fit: BoxFit.fill,
+      );
+    }
+    return Image.asset(
+      assetPath,
+      fit: BoxFit.fill,
     );
   }
 }

@@ -328,7 +328,44 @@ class _AppIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
-      child: Image.asset(assetPath, width: size, height: size, fit: BoxFit.cover),
+      child: _AssetIcon(
+        assetPath: assetPath,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+      ),
+    );
+  }
+}
+
+class _AssetIcon extends StatelessWidget {
+  const _AssetIcon({
+    required this.assetPath,
+    this.width,
+    this.height,
+    this.fit = BoxFit.contain,
+  });
+
+  final String assetPath;
+  final double? width;
+  final double? height;
+  final BoxFit fit;
+
+  @override
+  Widget build(BuildContext context) {
+    if (assetPath.toLowerCase().endsWith('.svg')) {
+      return SvgPicture.asset(
+        assetPath,
+        width: width,
+        height: height,
+        fit: fit,
+      );
+    }
+    return Image.asset(
+      assetPath,
+      width: width,
+      height: height,
+      fit: fit,
     );
   }
 }
@@ -418,7 +455,7 @@ class _BlockedShortsTrail extends StatelessWidget {
     if (showInstagram) {
       icons.add(
         const _AppIcon(
-          assetPath: 'assets/icons/instagram.png',
+          assetPath: 'assets/apps/instagram.svg',
           size: 24,
         ),
       );
@@ -429,7 +466,7 @@ class _BlockedShortsTrail extends StatelessWidget {
       }
       icons.add(
         const _AppIcon(
-          assetPath: 'assets/icons/youtube.png',
+          assetPath: 'assets/apps/youtube.svg',
           size: 24,
         ),
       );
@@ -805,11 +842,11 @@ class _RestrictedAppsTrail extends StatelessWidget {
   final int overflowCount;
 
   static const _icons = [
-    'assets/icons/instagram.png',
-    'assets/icons/youtube.png',
-    'assets/icons/tiktok.png',
-    'assets/icons/snapchat.png',
-    'assets/icons/facebook.png',
+    'assets/apps/instagram.svg',
+    'assets/apps/youtube.svg',
+    'assets/apps/tiktok.svg',
+    'assets/apps/snapchat.svg',
+    'assets/apps/facebook.jpg',
   ];
 
   @override
@@ -857,23 +894,23 @@ class _ResponsiveRestrictedAppsTrail extends StatelessWidget {
   static const _appIcons = [
     _RestrictedAppIconData(
       settingKey: 'instagram_app',
-      assetPath: 'assets/icons/instagram.png',
+      assetPath: 'assets/apps/instagram.svg',
     ),
     _RestrictedAppIconData(
       settingKey: 'youtube_app',
-      assetPath: 'assets/icons/youtube.png',
+      assetPath: 'assets/apps/youtube.svg',
     ),
     _RestrictedAppIconData(
       settingKey: 'tiktok_app',
-      assetPath: 'assets/icons/tiktok.png',
+      assetPath: 'assets/apps/tiktok.svg',
     ),
     _RestrictedAppIconData(
       settingKey: 'snapchat_app',
-      assetPath: 'assets/icons/snapchat.png',
+      assetPath: 'assets/apps/snapchat.svg',
     ),
     _RestrictedAppIconData(
       settingKey: 'facebook_app',
-      assetPath: 'assets/icons/facebook.png',
+      assetPath: 'assets/apps/facebook.jpg',
     ),
   ];
 

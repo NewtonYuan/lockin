@@ -86,7 +86,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const _accessibilityChannel = MethodChannel('lockin/accessibility');
 
   int _selectedIndex = 0;
-  int _screenFadeKey = 0;
   bool? _isAccessibilityEnabled;
   bool? _isUsageAccessEnabled;
   bool _bypassAccessibilityGate = false;
@@ -94,6 +93,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   DateTime _appInstalledOn = DateTime.now();
   List<AppUsageSegment> _usageSegments = const [];
   Set<String>? _installedTrackedPackages;
+  final List<BlockedWebsiteEntry> _blockedWebsites = [];
   String _blockCategory = 'Apps';
   final Set<String> _expandedApps = {};
   final Map<String, int?> _dailyTimeLimits = {
@@ -248,6 +248,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           savedConfig['dailyTimeLimits'] as Map<dynamic, dynamic>?;
       final rawBlockSettings =
           savedConfig['blockSettings'] as Map<dynamic, dynamic>?;
+      final rawBlockedWebsites =
+          savedConfig['blockedWebsites'] as List<dynamic>?;
 
       setState(() {
         if (rawDailyTimeLimits != null) {
@@ -270,6 +272,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               }
             }
           }
+        }
+
+        if (rawBlockedWebsites != null) {
+          _blockedWebsites
+            ..clear()
+            ..addAll(
+              rawBlockedWebsites.whereType<Map>().map((entry) {
+                final domain = entry['domain'] as String? ?? '';
+                final blockedSince = entry['blockedSince'];
+                final blockedSinceMillis =
+                    blockedSince is int ? blockedSince : 0;
+                return BlockedWebsiteEntry(
+                  domain: domain,
+                  blockedSince: DateTime.fromMillisecondsSinceEpoch(
+                    blockedSinceMillis,
+                  ),
+                );
+              }).where((entry) => entry.domain.isNotEmpty),
+            );
         }
       });
     } on PlatformException {
@@ -308,6 +329,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       // Android-only enforcement. Other platforms keep local UI state only.
     } on MissingPluginException {
       // Android-only enforcement. Other platforms keep local UI state only.
+    }
+  }
+
+  Future<void> _persistBlockedWebsites() async {
+    try {
+      await _accessibilityChannel.invokeMethod<void>(
+        'setBlockedWebsites',
+        {
+          'blockedWebsites': _blockedWebsites
+              .map(
+                (entry) => {
+                  'domain': entry.domain,
+                  'blockedSince': entry.blockedSince.millisecondsSinceEpoch,
+                },
+              )
+              .toList(),
+        },
+      );
+    } on PlatformException {
+      // Android-only persistence. Other platforms keep local UI state only.
+    } on MissingPluginException {
+      // Android-only persistence. Other platforms keep local UI state only.
     }
   }
 
@@ -422,6 +465,40 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         (first.year == second.year && first.month > second.month);
   }
 
+  void _addBlockedWebsite(String rawWebsite) {
+    final website = _normalizeWebsite(rawWebsite);
+    if (website.isEmpty) return;
+    final alreadyExists = _blockedWebsites.any(
+      (entry) => entry.domain.toLowerCase() == website.toLowerCase(),
+    );
+    if (alreadyExists) return;
+    setState(() {
+      _blockedWebsites.insert(
+        0,
+        BlockedWebsiteEntry(
+          domain: website,
+          blockedSince: DateTime.now(),
+        ),
+      );
+    });
+    _persistBlockedWebsites();
+  }
+
+  void _deleteBlockedWebsite(BlockedWebsiteEntry entry) {
+    setState(() {
+      _blockedWebsites.remove(entry);
+    });
+    _persistBlockedWebsites();
+  }
+
+  String _normalizeWebsite(String input) {
+    var normalized = input.trim().toLowerCase();
+    normalized = normalized.replaceFirst(RegExp(r'^https?://'), '');
+    normalized = normalized.replaceFirst(RegExp(r'^www\.'), '');
+    normalized = normalized.replaceAll(RegExp(r'/$'), '');
+    return normalized;
+  }
+
   void _selectTab(int index, {VoidCallback? update}) {
     if (index == _selectedIndex) {
       if (update != null) {
@@ -433,7 +510,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     setState(() {
       update?.call();
       _selectedIndex = index;
-      _screenFadeKey++;
     });
   }
 
@@ -480,8 +556,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         selectedCategory: _blockCategory,
         expandedApps: _expandedApps,
         installedPackageNames: _installedTrackedPackages,
+        blockedWebsites: _blockedWebsites,
         dailyTimeLimits: _dailyTimeLimits,
         blockSettings: _blockSettings,
+        onAddWebsite: _addBlockedWebsite,
+        onDeleteWebsite: _deleteBlockedWebsite,
         onSelectCategory: (category) {
           setState(() {
             _blockCategory = category;
@@ -595,21 +674,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       body: SafeArea(
         child: ColoredBox(
           color: appBackground,
-          child: TweenAnimationBuilder<double>(
-            key: ValueKey(_screenFadeKey),
-            tween: Tween(begin: 0, end: 1),
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-            builder: (context, opacity, child) {
-              return Opacity(
-                opacity: opacity,
-                child: child,
-              );
-            },
-            child: IndexedStack(
-              index: _selectedIndex,
-              children: _buildScreens(context),
-            ),
+          child: IndexedStack(
+            index: _selectedIndex,
+            children: _buildScreens(context),
           ),
         ),
       ),

@@ -10,10 +10,12 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.Calendar
+import org.json.JSONArray
 
 class AppGuardAccessibilityService : AccessibilityService() {
     private var lastForegroundPackage: String? = null
     private val enforcementHandler = Handler(Looper.getMainLooper())
+    private val lastVisibleBlockedWebsiteByPackage = mutableMapOf<String, String?>()
 
     override fun onServiceConnected() {
         activeService = this
@@ -31,6 +33,10 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: return
 
+        val previousPackageName = lastForegroundPackage
+        if (previousPackageName != null && previousPackageName != packageName) {
+            lastVisibleBlockedWebsiteByPackage.remove(previousPackageName)
+        }
         if (packageName != lastForegroundPackage) {
             lastForegroundPackage = packageName
         }
@@ -45,6 +51,18 @@ class AppGuardAccessibilityService : AccessibilityService() {
         if (shouldBlockPackage(packageName)) {
             enforceHome(packageName)
             return
+        }
+
+        val blockedWebsiteDomain = findBlockedWebsiteDomain(packageName, event)
+        if (blockedWebsiteDomain != null) {
+            val previousBlockedDomain = lastVisibleBlockedWebsiteByPackage[packageName]
+            lastVisibleBlockedWebsiteByPackage[packageName] = blockedWebsiteDomain
+            if (!blockedWebsiteDomain.equals(previousBlockedDomain, ignoreCase = true)) {
+                enforceBlockedWebsite(packageName, blockedWebsiteDomain)
+                return
+            }
+        } else if (isSupportedBrowserPackage(packageName)) {
+            lastVisibleBlockedWebsiteByPackage[packageName] = null
         }
 
         if (promptActive || isInstagramAllowed()) return
@@ -66,6 +84,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
             activeService = null
         }
         enforcementHandler.removeCallbacksAndMessages(null)
+        lastVisibleBlockedWebsiteByPackage.clear()
         super.onDestroy()
     }
 
@@ -103,6 +122,19 @@ class AppGuardAccessibilityService : AccessibilityService() {
             .getBoolean(YOUTUBE_SHORTS_SETTING_KEY, false)
     }
 
+    private fun getBlockedWebsiteDomains(): List<String> {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val serialized = prefs.getString(BLOCKED_WEBSITES_PREF_KEY, null) ?: return emptyList()
+        val jsonArray = JSONArray(serialized)
+        return List(jsonArray.length()) { index ->
+            jsonArray.getJSONObject(index).optString("domain")
+        }.map { domain ->
+            normalizeDomain(domain)
+        }.filter { domain ->
+            domain.isNotBlank()
+        }
+    }
+
     private fun getTodayForegroundMillis(appLimit: AppLimit): Long {
         val calendar = Calendar.getInstance()
         val endTime = calendar.timeInMillis
@@ -138,6 +170,23 @@ class AppGuardAccessibilityService : AccessibilityService() {
             enforcementHandler.postDelayed(
                 {
                     if (lastForegroundPackage == packageName && shouldBlockPackage(packageName)) {
+                        goHome()
+                    }
+                },
+                (retryIndex + 1) * BLOCK_RETRY_DELAY_MS,
+            )
+        }
+    }
+
+    private fun enforceBlockedWebsite(packageName: String, blockedDomain: String) {
+        goHome()
+        repeat(BLOCK_RETRY_COUNT) { retryIndex ->
+            enforcementHandler.postDelayed(
+                {
+                    if (
+                        lastForegroundPackage == packageName &&
+                        isBlockedWebsiteVisibleForPackage(packageName, blockedDomain)
+                    ) {
                         goHome()
                     }
                 },
@@ -242,6 +291,56 @@ class AppGuardAccessibilityService : AccessibilityService() {
             clickedLabel.equals("Shorts Shorts", ignoreCase = true)
     }
 
+    private fun findBlockedWebsiteDomain(
+        packageName: String,
+        event: AccessibilityEvent,
+    ): String? {
+        if (!isSupportedBrowserPackage(packageName)) return null
+        val blockedDomains = getBlockedWebsiteDomains()
+        if (blockedDomains.isEmpty()) return null
+        val visibleText = buildVisibleBrowserText(event)
+        return blockedDomains.firstOrNull { domain ->
+            containsBlockedDomain(visibleText, domain)
+        }
+    }
+
+    private fun isBlockedWebsiteVisibleForPackage(
+        packageName: String,
+        blockedDomain: String,
+    ): Boolean {
+        if (!isSupportedBrowserPackage(packageName)) return false
+        val rootNode = rootInActiveWindow ?: return false
+        val visibleText = buildNodeText(rootNode)
+        return containsBlockedDomain(visibleText, blockedDomain)
+    }
+
+    private fun buildVisibleBrowserText(event: AccessibilityEvent): String {
+        val eventText = buildString {
+            event.text.forEach { append(' ').append(it) }
+            append(' ').append(event.contentDescription?.toString().orEmpty())
+        }
+        val rootText = rootInActiveWindow?.let(::buildNodeText).orEmpty()
+        return "$eventText $rootText".replace(Regex("\\s+"), " ").trim()
+    }
+
+    private fun containsBlockedDomain(visibleText: String, blockedDomain: String): Boolean {
+        if (visibleText.isBlank() || blockedDomain.isBlank()) return false
+        val normalizedText = visibleText.lowercase()
+        val normalizedDomain = normalizeDomain(blockedDomain)
+        if (normalizedDomain.isBlank()) return false
+        return normalizedText.contains(normalizedDomain)
+    }
+
+    private fun normalizeDomain(domain: String): String {
+        return domain
+            .trim()
+            .lowercase()
+            .removePrefix("https://")
+            .removePrefix("http://")
+            .removePrefix("www.")
+            .trimEnd('/')
+    }
+
     private fun logInstagramEvent(event: AccessibilityEvent, eventType: Int) {
         logDebugEvent(INSTAGRAM_DEBUG_TAG, event, eventType)
     }
@@ -315,8 +414,13 @@ class AppGuardAccessibilityService : AccessibilityService() {
             packageName.startsWith(YOUTUBE_REVANCED_PACKAGE_PREFIX)
     }
 
+    private fun isSupportedBrowserPackage(packageName: String): Boolean {
+        return supportedBrowserPackages.contains(packageName)
+    }
+
     companion object {
         const val PREFS_NAME = "tempus_app_guard"
+        const val BLOCKED_WEBSITES_PREF_KEY = "blocked_websites"
         const val TEN_SECOND_LIMIT_VALUE = -10
         const val INSTAGRAM_PACKAGE_NAME = "com.instagram.android"
         const val YOUTUBE_PACKAGE_NAME = "com.google.android.youtube"
@@ -331,6 +435,17 @@ class AppGuardAccessibilityService : AccessibilityService() {
         private const val PROMPT_SUPPRESSION_MILLIS = 800L
         private const val INSTAGRAM_DEBUG_LOGS_ENABLED = true
         private const val YOUTUBE_DEBUG_LOGS_ENABLED = true
+        private val supportedBrowserPackages = setOf(
+            "com.android.chrome",
+            "com.chrome.beta",
+            "com.chrome.dev",
+            "com.brave.browser",
+            "com.microsoft.emmx",
+            "org.mozilla.firefox",
+            "org.mozilla.focus",
+            "com.sec.android.app.sbrowser",
+            "com.opera.browser",
+        )
         private val trackedAppLimits = listOf(
             AppLimit(
                 settingKey = "instagram_app",

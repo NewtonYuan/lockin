@@ -60,18 +60,19 @@ flutter:
   assets:
     - assets/icons/home.svg
     - assets/icons/block.svg
-    - assets/icons/instagram.png
-    - assets/icons/youtube.png
-    - assets/icons/tiktok.png
-    - assets/icons/snapchat.png
-    - assets/icons/facebook.png
+    - assets/apps/instagram.svg
+    - assets/apps/youtube.svg
+    - assets/apps/tiktok.svg
+    - assets/apps/snapchat.svg
+    - assets/apps/facebook.jpg
     - assets/icons/timer.svg
     - assets/icons/statistics.svg
     - assets/icons/settings.svg
-    - assets/icons/app_icon.svg
-    - assets/icons/construction.svg
     - assets/icons/share.svg
     - assets/icons/notifications.svg
+    - assets/icons/delete_forever.svg
+    - assets/images/through_the_park_empty.svg
+    - assets/images/statistics_coming_soon.svg
 
   # To add assets to your application, add an assets section, like this:
   # assets:
