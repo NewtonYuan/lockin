@@ -25,6 +25,9 @@ class StickyHeaderSliver extends StatelessWidget {
 }
 
 class StickyTitleHeader extends StatelessWidget {
+  static const double _leadingSlotWidth = 28;
+  static const double _leadingTitleGap = 10;
+
   const StickyTitleHeader({
     super.key,
     required this.title,
@@ -56,18 +59,23 @@ class StickyTitleHeader extends StatelessWidget {
           if (onBack != null)
             Align(
               alignment: Alignment.centerLeft,
-              child: IconButton(
-                onPressed: onBack,
-                icon: const Icon(
-                  Icons.arrow_back_ios_new_rounded,
-                  color: appText,
-                  size: 20,
-                ),
-                splashRadius: 20,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 40,
-                  minHeight: 40,
+              child: SizedBox(
+                width: _leadingSlotWidth,
+                height: 40,
+                child: IconButton(
+                  onPressed: onBack,
+                  alignment: Alignment.centerLeft,
+                  icon: const Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    color: appText,
+                    size: 20,
+                  ),
+                  splashRadius: 20,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: _leadingSlotWidth,
+                    minHeight: 40,
+                  ),
                 ),
               ),
             ),
@@ -97,7 +105,10 @@ class StickyTitleHeader extends StatelessWidget {
           ] else
             Row(
               children: [
-                if (onBack != null) const SizedBox(width: 50),
+                if (onBack != null) ...[
+                  const SizedBox(width: _leadingSlotWidth),
+                  const SizedBox(width: _leadingTitleGap),
+                ],
                 if (leading != null) ...[
                   leading!,
                   const SizedBox(width: 8),

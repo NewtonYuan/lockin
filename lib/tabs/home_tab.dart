@@ -11,6 +11,8 @@ class HomeOverview extends StatelessWidget {
     super.key,
     required this.trackerMonth,
     required this.usageSegments,
+    required this.scrollDayStatuses,
+    required this.firstTrackableDate,
     required this.blockSettings,
     required this.dailyTimeLimits,
     required this.canShowPreviousMonth,
@@ -22,6 +24,8 @@ class HomeOverview extends StatelessWidget {
 
   final DateTime trackerMonth;
   final List<AppUsageSegment> usageSegments;
+  final Map<String, ScrollDayStatus> scrollDayStatuses;
+  final DateTime firstTrackableDate;
   final Map<String, bool> blockSettings;
   final Map<String, int?> dailyTimeLimits;
   final bool canShowPreviousMonth;
@@ -42,7 +46,7 @@ class HomeOverview extends StatelessWidget {
               title: 'Overview',
               centerTitle: false,
               trailing: IconButton(
-                onPressed: () {},
+                onPressed: () => _showNotificationsSheet(context),
                 icon: SvgPicture.asset(
                   'assets/icons/notifications.svg',
                   width: 26,
@@ -86,6 +90,8 @@ class HomeOverview extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _DailyTrackerCard(
                   month: trackerMonth,
+                  scrollDayStatuses: scrollDayStatuses,
+                  firstTrackableDate: firstTrackableDate,
                   canShowPreviousMonth: canShowPreviousMonth,
                   canShowNextMonth: canShowNextMonth,
                   onPreviousMonth: onPreviousMonth,
@@ -93,9 +99,12 @@ class HomeOverview extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
-                child: _StreakSummaryCard(),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _StreakSummaryCard(
+                  scrollDayStatuses: scrollDayStatuses,
+                  firstTrackableDate: firstTrackableDate,
+                ),
               ),
             ]),
           ),
@@ -103,11 +112,36 @@ class HomeOverview extends StatelessWidget {
       ],
     );
   }
+
+  Future<void> _showNotificationsSheet(BuildContext context) {
+    return showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Notifications',
+      barrierColor: Colors.black.withValues(alpha: 0.08),
+      transitionDuration: const Duration(milliseconds: 140),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return const _NotificationsDropdown();
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOut,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: child,
+        );
+      },
+    );
+  }
 }
 
-class _DailyTrackerCard extends StatelessWidget {
+class _DailyTrackerCard extends StatefulWidget {
   const _DailyTrackerCard({
     required this.month,
+    required this.scrollDayStatuses,
+    required this.firstTrackableDate,
     required this.canShowPreviousMonth,
     required this.canShowNextMonth,
     required this.onPreviousMonth,
@@ -115,6 +149,8 @@ class _DailyTrackerCard extends StatelessWidget {
   });
 
   final DateTime month;
+  final Map<String, ScrollDayStatus> scrollDayStatuses;
+  final DateTime firstTrackableDate;
   final bool canShowPreviousMonth;
   final bool canShowNextMonth;
   final VoidCallback onPreviousMonth;
@@ -142,11 +178,71 @@ class _DailyTrackerCard extends StatelessWidget {
       (_trackerCellSize * 7) + (_trackerColumnGap * 6);
 
   @override
-  Widget build(BuildContext context) {
-    final titleStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
-      color: appText,
-      fontWeight: FontWeight.w700,
+  State<_DailyTrackerCard> createState() => _DailyTrackerCardState();
+}
+
+class _DailyTrackerCardState extends State<_DailyTrackerCard>
+    with SingleTickerProviderStateMixin {
+  int _slideDirection = 1;
+  late final AnimationController _monthSlideController;
+  DateTime? _previousMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    _monthSlideController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
     );
+  }
+
+  @override
+  void didUpdateWidget(covariant _DailyTrackerCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.month.year != widget.month.year ||
+        oldWidget.month.month != widget.month.month) {
+      _previousMonth = oldWidget.month;
+      _monthSlideController.forward(from: 0).whenComplete(() {
+        if (!mounted) return;
+        setState(() {
+          _previousMonth = null;
+        });
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _monthSlideController.dispose();
+    super.dispose();
+  }
+
+  void _showPreviousMonth() {
+    setState(() {
+      _slideDirection = -1;
+    });
+    widget.onPreviousMonth();
+  }
+
+  void _showNextMonth() {
+    setState(() {
+      _slideDirection = 1;
+    });
+    widget.onNextMonth();
+  }
+
+  Widget _buildMonthLabel(BuildContext context, DateTime month) {
+    return Text(
+      '${_DailyTrackerCard._monthNames[month.month - 1]} ${month.year}',
+      textAlign: TextAlign.center,
+      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+        color: appText,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+
+  Widget _buildMonthBody(BuildContext context, DateTime month) {
     final firstDayOfMonth = DateTime(month.year, month.month, 1);
     final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
     final leadingEmptyDays = firstDayOfMonth.weekday - 1;
@@ -158,6 +254,124 @@ class _DailyTrackerCard extends StatelessWidget {
     final weekRows = List<List<int?>>.generate(
       allSlots.length ~/ 7,
       (index) => allSlots.sublist(index * 7, (index * 7) + 7),
+    );
+
+    return Column(
+      children: [
+        Center(
+          child: SizedBox(
+            width: _DailyTrackerCard._trackerWidth,
+            child: Row(
+              children: List.generate(_DailyTrackerCard._weekdayLabels.length, (
+                index,
+              ) {
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (index > 0)
+                      SizedBox(width: _DailyTrackerCard._trackerColumnGap),
+                    SizedBox(
+                      width: _DailyTrackerCard._trackerCellSize,
+                      child: Center(
+                        child: Text(
+                          _DailyTrackerCard._weekdayLabels[index],
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: appMutedText,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Column(
+          children: weekRows
+              .map(
+                (week) => Center(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _TrackerWeekRow(
+                      days: week,
+                      month: month,
+                      scrollDayStatuses: widget.scrollDayStatuses,
+                      firstTrackableDate: widget.firstTrackableDate,
+                      cellSize: _DailyTrackerCard._trackerCellSize,
+                      columnGap: _DailyTrackerCard._trackerColumnGap,
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSlidingMonthPane({
+    required Widget currentChild,
+    required Widget Function(DateTime month) builder,
+    bool expand = false,
+  }) {
+    if (_previousMonth == null) {
+      return expand ? SizedBox(width: double.infinity, child: currentChild) : currentChild;
+    }
+
+    final incomingAnimation = Tween<Offset>(
+      begin: Offset(_slideDirection > 0 ? 1 : -1, 0),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _monthSlideController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+
+    final outgoingAnimation = Tween<Offset>(
+      begin: Offset.zero,
+      end: Offset(_slideDirection > 0 ? -1 : 1, 0),
+    ).animate(
+      CurvedAnimation(
+        parent: _monthSlideController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+
+    return ClipRect(
+      child: Stack(
+        alignment: expand ? Alignment.center : Alignment.topCenter,
+        children: [
+          SlideTransition(
+            position: outgoingAnimation,
+            child: expand
+                ? SizedBox(
+                    width: double.infinity,
+                    child: builder(_previousMonth!),
+                  )
+                : builder(_previousMonth!),
+          ),
+          SlideTransition(
+            position: incomingAnimation,
+            child: expand
+                ? SizedBox(width: double.infinity, child: currentChild)
+                : currentChild,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final month = widget.month;
+    final titleStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+      color: appText,
+      fontWeight: FontWeight.w700,
     );
 
     return Container(
@@ -175,72 +389,27 @@ class _DailyTrackerCard extends StatelessWidget {
             children: [
               _MonthArrowButton(
                 icon: Icons.chevron_left_rounded,
-                isEnabled: canShowPreviousMonth,
-                onTap: onPreviousMonth,
+                isEnabled: widget.canShowPreviousMonth,
+                onTap: _showPreviousMonth,
               ),
               Expanded(
-                child: Text(
-                  '${_monthNames[month.month - 1]} ${month.year}',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: appText,
-                    fontWeight: FontWeight.w700,
-                  ),
+                child: _buildSlidingMonthPane(
+                  expand: true,
+                  currentChild: Center(child: _buildMonthLabel(context, month)),
+                  builder: (pageMonth) => _buildMonthLabel(context, pageMonth),
                 ),
               ),
               _MonthArrowButton(
                 icon: Icons.chevron_right_rounded,
-                isEnabled: canShowNextMonth,
-                onTap: onNextMonth,
+                isEnabled: widget.canShowNextMonth,
+                onTap: _showNextMonth,
               ),
             ],
           ),
           const SizedBox(height: 14),
-          Center(
-            child: SizedBox(
-              width: _trackerWidth,
-              child: Row(
-                children: List.generate(_weekdayLabels.length, (index) {
-                  return Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (index > 0) SizedBox(width: _trackerColumnGap),
-                      SizedBox(
-                        width: _trackerCellSize,
-                        child: Center(
-                          child: Text(
-                            _weekdayLabels[index],
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: appMutedText,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                }),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Column(
-            children: weekRows
-                .map(
-                  (week) => Center(
-                    child: Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _TrackerWeekRow(
-                        days: week,
-                        month: month,
-                        cellSize: _trackerCellSize,
-                        columnGap: _trackerColumnGap,
-                      ),
-                    ),
-                  ),
-                )
-                .toList(),
+          _buildSlidingMonthPane(
+            currentChild: _buildMonthBody(context, month),
+            builder: (pageMonth) => _buildMonthBody(context, pageMonth),
           ),
         ],
       ),
@@ -326,13 +495,15 @@ class _AppIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: _AssetIcon(
-        assetPath: assetPath,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
+    return SizedBox(
+      width: size,
+      height: size,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: _AssetIcon(
+          assetPath: assetPath,
+          fit: BoxFit.fill,
+        ),
       ),
     );
   }
@@ -587,27 +758,38 @@ class _HomeShortcutCardsRow extends StatelessWidget {
 }
 
 class _StreakSummaryCard extends StatelessWidget {
-  const _StreakSummaryCard();
+  const _StreakSummaryCard({
+    required this.scrollDayStatuses,
+    required this.firstTrackableDate,
+  });
+
+  final Map<String, ScrollDayStatus> scrollDayStatuses;
+  final DateTime firstTrackableDate;
 
   @override
   Widget build(BuildContext context) {
+    final streaks = _calculateStreaks(
+      scrollDayStatuses: scrollDayStatuses,
+      firstTrackableDate: firstTrackableDate,
+    );
+
     return Material(
       color: appSurface,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         child: Row(
-          children: const [
+          children: [
             Expanded(
               child: _StreakSummaryItem(
                 label: 'Current Streak',
-                value: '12 Days',
+                value: '${streaks.current} Days',
               ),
             ),
             Expanded(
               child: _StreakSummaryItem(
                 label: 'Longest Streak',
-                value: '28 Days',
+                value: '${streaks.longest} Days',
               ),
             ),
             Expanded(
@@ -618,6 +800,150 @@ class _StreakSummaryCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+({int current, int longest}) _calculateStreaks({
+  required Map<String, ScrollDayStatus> scrollDayStatuses,
+  required DateTime firstTrackableDate,
+}) {
+  final today = DateTime.now();
+  final firstDate = DateTime(
+    firstTrackableDate.year,
+    firstTrackableDate.month,
+    firstTrackableDate.day,
+  );
+  final todayDate = DateTime(today.year, today.month, today.day);
+
+  int current = 0;
+  var cursor = todayDate;
+  while (!cursor.isBefore(firstDate)) {
+    final status =
+        scrollDayStatuses[_calendarDateKey(cursor)] ?? ScrollDayStatus.scrolled;
+    if (status != ScrollDayStatus.noScroll) break;
+    current++;
+    cursor = cursor.subtract(const Duration(days: 1));
+  }
+
+  int longest = 0;
+  int running = 0;
+  for (
+    var date = firstDate;
+    !date.isAfter(todayDate);
+    date = date.add(const Duration(days: 1))
+  ) {
+    final status =
+        scrollDayStatuses[_calendarDateKey(date)] ?? ScrollDayStatus.scrolled;
+    if (status == ScrollDayStatus.noScroll) {
+      running++;
+      if (running > longest) {
+        longest = running;
+      }
+    } else {
+      running = 0;
+    }
+  }
+
+  return (current: current, longest: longest);
+}
+
+class _NotificationsDropdown extends StatelessWidget {
+  const _NotificationsDropdown();
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final topOffset = MediaQuery.paddingOf(context).top + 78;
+
+    return Material(
+      color: Colors.transparent,
+      child: Stack(
+        children: [
+          const Positioned.fill(child: SizedBox()),
+          Positioned(
+            top: topOffset,
+            right: 16,
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                width: 300,
+                constraints: const BoxConstraints(minHeight: 220),
+                decoration: BoxDecoration(
+                  color: appBackground,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: appBorder),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Notifications',
+                      style: textTheme.titleLarge?.copyWith(
+                        color: appText,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: appSurface,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 22,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SvgPicture.asset(
+                            'assets/icons/notifications.svg',
+                            width: 42,
+                            height: 42,
+                            colorFilter: const ColorFilter.mode(
+                              appMutedText,
+                              BlendMode.srcIn,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'No notifications yet.',
+                            textAlign: TextAlign.center,
+                            style: textTheme.titleMedium?.copyWith(
+                              color: appText,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Updates and reminders will show up here.',
+                            textAlign: TextAlign.center,
+                            style: textTheme.bodyMedium?.copyWith(
+                              color: appMutedText,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -764,12 +1090,14 @@ class _SegmentedRingPainter extends CustomPainter {
       final visibleStart = startAngle + (gap / 2);
       segmentPaint.color = segment.color;
       canvas.drawArc(rect, visibleStart, visibleSweep, false, segmentPaint);
-      _drawSegmentLabel(
-        canvas: canvas,
-        center: center,
-        angle: startAngle + (sweepAngle / 2),
-        segment: segment,
-      );
+      if (segments.length > 1 && segment.appName.isNotEmpty) {
+        _drawSegmentLabel(
+          canvas: canvas,
+          center: center,
+          angle: startAngle + (sweepAngle / 2),
+          segment: segment,
+        );
+      }
       startAngle += sweepAngle;
     }
   }
@@ -1040,52 +1368,87 @@ class _TrackerDayCell extends StatelessWidget {
     }
 
     final isBlocked = state == _TrackerDayState.blocked;
-    final backgroundColor = switch (state) {
-      _TrackerDayState.blocked => brand,
-      _TrackerDayState.none => appSurfaceStrong,
-      _TrackerDayState.empty => Colors.transparent,
-    };
     final textColor = isBlocked ? Colors.white : appText;
+    final decoration = switch (state) {
+      _TrackerDayState.blocked => BoxDecoration(
+          color: brand,
+          borderRadius: BorderRadius.circular(8),
+        ),
+      _TrackerDayState.partial => BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: [brand, brand, appSurfaceStrong, appSurfaceStrong],
+            stops: [0.0, 0.5, 0.5, 1.0],
+          ),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: appBorder),
+        ),
+      _TrackerDayState.none => BoxDecoration(
+          color: appSurfaceStrong,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: appBorder),
+        ),
+      _TrackerDayState.installDay => BoxDecoration(
+          color: brand,
+          borderRadius: BorderRadius.circular(8),
+        ),
+      _TrackerDayState.disabled => BoxDecoration(
+          color: appSurfaceStrong.withValues(alpha: 0.28),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: appBorder.withValues(alpha: 0.35)),
+        ),
+      _TrackerDayState.empty => BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+    };
 
     return SizedBox(
       width: size,
       height: size,
       child: Container(
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: state == _TrackerDayState.none
-                ? appBorder
-                : Colors.transparent,
-          ),
-        ),
+        decoration: decoration,
         child: Center(
-          child: Text(
-            '$day',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: textColor,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          child: state == _TrackerDayState.installDay
+              ? SvgPicture.asset(
+                  'assets/icons/install_day_star.svg',
+                  width: size * 0.98,
+                  height: size * 0.98,
+                )
+              : Text(
+                  '$day',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: state == _TrackerDayState.disabled
+                        ? appMutedText.withValues(alpha: 0.4)
+                        : textColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
         ),
       ),
     );
   }
 }
 
-enum _TrackerDayState { empty, none, blocked }
+enum ScrollDayStatus { noScroll, partialScroll, scrolled }
+
+enum _TrackerDayState { empty, none, partial, blocked, installDay, disabled }
 
 class _TrackerWeekRow extends StatelessWidget {
   const _TrackerWeekRow({
     required this.days,
     required this.month,
+    required this.scrollDayStatuses,
+    required this.firstTrackableDate,
     required this.cellSize,
     required this.columnGap,
   });
 
   final List<int?> days;
   final DateTime month;
+  final Map<String, ScrollDayStatus> scrollDayStatuses;
+  final DateTime firstTrackableDate;
   final double cellSize;
   final double columnGap;
 
@@ -1095,7 +1458,12 @@ class _TrackerWeekRow extends StatelessWidget {
         .map(
           (day) => day == null
               ? _TrackerDayState.empty
-              : _sampleDayState(month, day),
+              : _calendarDayState(
+                  month: month,
+                  day: day,
+                  firstTrackableDate: firstTrackableDate,
+                  scrollDayStatuses: scrollDayStatuses,
+                ),
         )
         .toList();
 
@@ -1140,10 +1508,41 @@ class _TrackerWeekRow extends StatelessWidget {
   }
 }
 
-_TrackerDayState _sampleDayState(DateTime month, int day) {
-  final value = (month.year * 100) + (month.month * 31) + day;
-  if (value % 2 == 0 || value % 5 == 0) {
-    return _TrackerDayState.blocked;
+_TrackerDayState _calendarDayState({
+  required DateTime month,
+  required int day,
+  required DateTime firstTrackableDate,
+  required Map<String, ScrollDayStatus> scrollDayStatuses,
+}) {
+  final actualDate = DateTime(month.year, month.month, day);
+  final today = DateTime.now();
+  final todayDate = DateTime(today.year, today.month, today.day);
+  final firstDate = DateTime(
+    firstTrackableDate.year,
+    firstTrackableDate.month,
+    firstTrackableDate.day,
+  );
+
+  if (actualDate == firstDate) {
+    return _TrackerDayState.installDay;
   }
-  return _TrackerDayState.none;
+
+  if (actualDate.isAfter(todayDate) || actualDate.isBefore(firstDate)) {
+    return _TrackerDayState.disabled;
+  }
+
+  final dateKey = _calendarDateKey(actualDate);
+  final status = scrollDayStatuses[dateKey] ?? ScrollDayStatus.scrolled;
+  return switch (status) {
+    ScrollDayStatus.noScroll => _TrackerDayState.blocked,
+    ScrollDayStatus.partialScroll => _TrackerDayState.partial,
+    ScrollDayStatus.scrolled => _TrackerDayState.none,
+  };
+}
+
+String _calendarDateKey(DateTime date) {
+  final year = date.year.toString().padLeft(4, '0');
+  final month = date.month.toString().padLeft(2, '0');
+  final day = date.day.toString().padLeft(2, '0');
+  return '$year-$month-$day';
 }

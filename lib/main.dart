@@ -12,33 +12,6 @@ void main() {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Tempus',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: brand,
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-      ),
-      home: const HomePage(),
-    );
-  }
-}
-
-class HomePage extends StatefulWidget {
-  const HomePage({super.key});
-
-  @override
-  State<HomePage> createState() => _HomePageState();
-}
-
 const _trackedUsageApps = [
   _TrackedUsageApp(
     appName: 'Instagram',
@@ -82,16 +55,49 @@ class _TrackedUsageApp {
   final Color color;
 }
 
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Tempus',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: brand,
+          brightness: Brightness.light,
+        ),
+        useMaterial3: true,
+      ),
+      home: const HomePage(),
+    );
+  }
+}
+
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const _accessibilityChannel = MethodChannel('lockin/accessibility');
+  static const _partialScrollThresholdMinutes = 30;
+  static const _navFadeDuration = Duration(milliseconds: 150);
 
   int _selectedIndex = 0;
+  late final PageController _pageController;
+  double _pageOpacity = 1;
+  bool _isFadingBetweenTabs = false;
   bool? _isAccessibilityEnabled;
   bool? _isUsageAccessEnabled;
   bool _bypassAccessibilityGate = false;
   DateTime _trackerMonth = DateTime(DateTime.now().year, DateTime.now().month);
   DateTime _appInstalledOn = DateTime.now();
   List<AppUsageSegment> _usageSegments = const [];
+  final Map<String, ScrollDayStatus> _scrollDayStatuses = {};
   Set<String>? _installedTrackedPackages;
   final List<BlockedWebsiteEntry> _blockedWebsites = [];
   String _blockCategory = 'Apps';
@@ -119,6 +125,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _pageController = PageController();
     WidgetsBinding.instance.addObserver(this);
     _refreshAccessibilityStatus();
     _refreshUsageAccessStatus();
@@ -131,6 +138,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -221,9 +229,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         'getTodayUsageStats',
       );
       if (!mounted || usageStats == null) return;
+      final usageSegments = _usageSegmentsFromStats(usageStats);
       setState(() {
-        _usageSegments = _usageSegmentsFromStats(usageStats);
+        _usageSegments = usageSegments;
       });
+      _updateTodayScrollStatus(usageSegments);
     } on PlatformException {
       if (!mounted) return;
       setState(() {
@@ -248,6 +258,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           savedConfig['dailyTimeLimits'] as Map<dynamic, dynamic>?;
       final rawBlockSettings =
           savedConfig['blockSettings'] as Map<dynamic, dynamic>?;
+      final rawScrollDayStatuses =
+          savedConfig['scrollDayStatuses'] as Map<dynamic, dynamic>?;
       final rawBlockedWebsites =
           savedConfig['blockedWebsites'] as List<dynamic>?;
 
@@ -272,6 +284,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               }
             }
           }
+        }
+
+        if (rawScrollDayStatuses != null) {
+          _scrollDayStatuses
+            ..clear()
+            ..addEntries(
+              rawScrollDayStatuses.entries.map((entry) {
+                final key = entry.key;
+                final value = entry.value;
+                if (key is! String || value is! int) {
+                  return const MapEntry('', ScrollDayStatus.scrolled);
+                }
+                return MapEntry(key, _scrollDayStatusFromInt(value));
+              }).where((entry) => entry.key.isNotEmpty),
+            );
         }
 
         if (rawBlockedWebsites != null) {
@@ -354,6 +381,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _persistTodayScrollStatus(ScrollDayStatus status) async {
+    final dateKey = _dateKey(DateTime.now());
+    try {
+      await _accessibilityChannel.invokeMethod<void>(
+        'setScrollDayStatus',
+        {
+          'dateKey': dateKey,
+          'status': _scrollDayStatusToInt(status),
+        },
+      );
+    } on PlatformException {
+      // Android-only persistence. Other platforms keep local UI state only.
+    } on MissingPluginException {
+      // Android-only persistence. Other platforms keep local UI state only.
+    }
+  }
+
   Future<void> _refreshInstalledTrackedPackages() async {
     try {
       final installedPackages =
@@ -377,6 +421,48 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  void _updateTodayScrollStatus(List<AppUsageSegment> usageSegments) {
+    if (_isUsageAccessEnabled != true) return;
+    final totalMinutes = usageSegments.fold<int>(
+      0,
+      (sum, segment) => sum + segment.minutes,
+    );
+    final nextStatus = switch (totalMinutes) {
+      0 => ScrollDayStatus.noScroll,
+      <= _partialScrollThresholdMinutes => ScrollDayStatus.partialScroll,
+      _ => ScrollDayStatus.scrolled,
+    };
+    final dateKey = _dateKey(DateTime.now());
+    if (_scrollDayStatuses[dateKey] == nextStatus) return;
+    setState(() {
+      _scrollDayStatuses[dateKey] = nextStatus;
+    });
+    _persistTodayScrollStatus(nextStatus);
+  }
+
+  String _dateKey(DateTime date) {
+    final year = date.year.toString().padLeft(4, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '$year-$month-$day';
+  }
+
+  ScrollDayStatus _scrollDayStatusFromInt(int value) {
+    return switch (value) {
+      1 => ScrollDayStatus.noScroll,
+      2 => ScrollDayStatus.partialScroll,
+      _ => ScrollDayStatus.scrolled,
+    };
+  }
+
+  int _scrollDayStatusToInt(ScrollDayStatus status) {
+    return switch (status) {
+      ScrollDayStatus.noScroll => 1,
+      ScrollDayStatus.partialScroll => 2,
+      ScrollDayStatus.scrolled => 3,
+    };
+  }
+
   List<AppUsageSegment> _usageSegmentsFromStats(List<dynamic> usageStats) {
     final minutesByPackage = <String, int>{};
     for (final rawStat in usageStats) {
@@ -394,9 +480,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final segments = <AppUsageSegment>[];
     for (final app in _trackedUsageApps) {
       final totalMinutes = app.packageNames.fold<int>(
-        0,
-        (sum, packageName) => sum + (minutesByPackage[packageName] ?? 0),
-      ) +
+            0,
+            (sum, packageName) => sum + (minutesByPackage[packageName] ?? 0),
+          ) +
           minutesByPackage.entries.fold<int>(
             0,
             (sum, entry) => app.packagePrefixes.any(
@@ -414,6 +500,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ),
       );
     }
+
     return segments;
   }
 
@@ -511,6 +598,39 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       update?.call();
       _selectedIndex = index;
     });
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
+  Future<void> _fadeToTab(int index) async {
+    if (index == _selectedIndex || _isFadingBetweenTabs) {
+      return;
+    }
+
+    setState(() {
+      _isFadingBetweenTabs = true;
+      _selectedIndex = index;
+      _pageOpacity = 0;
+    });
+
+    await Future<void>.delayed(_navFadeDuration);
+    if (!mounted) return;
+
+    _pageController.jumpToPage(index);
+
+    setState(() {
+      _pageOpacity = 1;
+    });
+
+    await Future<void>.delayed(_navFadeDuration);
+    if (!mounted) return;
+
+    setState(() {
+      _isFadingBetweenTabs = false;
+    });
   }
 
   List<Widget> _buildScreens(BuildContext context) {
@@ -518,6 +638,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       HomeOverview(
         trackerMonth: _trackerMonth,
         usageSegments: _usageSegments,
+        scrollDayStatuses: _scrollDayStatuses,
+        firstTrackableDate: _appInstalledOn,
         blockSettings: _blockSettings,
         dailyTimeLimits: _dailyTimeLimits,
         canShowPreviousMonth: _canShowPreviousTrackerMonth,
@@ -551,7 +673,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ),
       BlockScreen(
         onBackToHome: () {
-          _selectTab(0);
+          _fadeToTab(0);
         },
         selectedCategory: _blockCategory,
         expandedApps: _expandedApps,
@@ -590,12 +712,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ),
       StatisticsTab(
         onBackToHome: () {
-          _selectTab(0);
+          _fadeToTab(0);
         },
       ),
       SettingsTab(
         onBackToHome: () {
-          _selectTab(0);
+          _fadeToTab(0);
         },
         onOpenAccessibilitySettings: _openAccessibilitySettings,
         onOpenUsageAccessSettings: _openUsageAccessSettings,
@@ -674,16 +796,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       body: SafeArea(
         child: ColoredBox(
           color: appBackground,
-          child: IndexedStack(
-            index: _selectedIndex,
-            children: _buildScreens(context),
+          child: AnimatedOpacity(
+            opacity: _pageOpacity,
+            duration: _navFadeDuration,
+            curve: Curves.easeOut,
+            child: PageView(
+              controller: _pageController,
+              physics: _isFadingBetweenTabs
+                  ? const NeverScrollableScrollPhysics()
+                  : null,
+              onPageChanged: (index) {
+                if (_selectedIndex == index) return;
+                setState(() {
+                  _selectedIndex = index;
+                });
+              },
+              children: _buildScreens(context),
+            ),
           ),
         ),
       ),
       bottomNavigationBar: InstagramBottomNavBar(
         selectedIndex: _selectedIndex,
         onTabSelected: (index) {
-          _selectTab(index);
+          _fadeToTab(index);
         },
       ),
     );

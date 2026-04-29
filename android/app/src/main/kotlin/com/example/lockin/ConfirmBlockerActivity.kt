@@ -2,7 +2,6 @@ package com.example.lockin
 
 import android.app.Activity
 import android.content.res.ColorStateList
-import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -14,8 +13,17 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 
-class ConfirmInstagramActivity : Activity() {
+class ConfirmBlockerActivity : Activity() {
     private val minuteOptions = intArrayOf(1, 2, 3, 5, 10, 15, 30, 60)
+
+    private val target: String
+        get() = intent?.getStringExtra(EXTRA_TARGET) ?: TARGET_INSTAGRAM
+
+    private val appLabel: String
+        get() = when (target) {
+            TARGET_YOUTUBE -> "YouTube"
+            else -> "Instagram"
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,7 +48,7 @@ class ConfirmInstagramActivity : Activity() {
 
             addView(
                 TextView(context).apply {
-                    text = "Open Instagram?"
+                    text = "Open $appLabel?"
                     setTextColor(Color.WHITE)
                     textSize = 30f
                     gravity = Gravity.CENTER
@@ -54,7 +62,7 @@ class ConfirmInstagramActivity : Activity() {
 
             addView(
                 TextView(context).apply {
-                    text = "Do you really want to open Instagram right now?"
+                    text = "Do you really want to open $appLabel right now?"
                     setTextColor(Color.rgb(216, 220, 226))
                     textSize = 18f
                     gravity = Gravity.CENTER
@@ -129,7 +137,7 @@ class ConfirmInstagramActivity : Activity() {
 
             addView(
                 TextView(context).apply {
-                    text = "Choose how long Instagram should stay open."
+                    text = "Choose how long $appLabel should stay open."
                     setTextColor(Color.rgb(216, 220, 226))
                     textSize = 18f
                     gravity = Gravity.CENTER
@@ -152,7 +160,7 @@ class ConfirmInstagramActivity : Activity() {
                         setTypeface(typeface, Typeface.BOLD)
                         minHeight = dp(48)
                         setOnClickListener {
-                            AppGuardAccessibilityService.allowInstagramForMinutes(minutes)
+                            AppGuardAccessibilityService.allowTargetForMinutes(target, minutes)
                             finish()
                         }
                     },
@@ -212,6 +220,9 @@ class ConfirmInstagramActivity : Activity() {
     }
 
     companion object {
+        const val EXTRA_TARGET = "target"
+        const val TARGET_INSTAGRAM = "instagram"
+        const val TARGET_YOUTUBE = "youtube"
         const val BRAND = 0xFF00688F.toInt()
         const val BRAND_PRESSED = 0xFF00A6D6.toInt()
     }

@@ -1,6 +1,7 @@
 package com.example.lockin
 
 import android.app.AppOpsManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
@@ -14,7 +15,12 @@ import java.util.Calendar
 import org.json.JSONArray
 import org.json.JSONObject
 
-class MainActivity : FlutterActivity() {
+open class MainActivity : FlutterActivity() {
+    companion object {
+        const val ACCESSIBILITY_CHANNEL_NAME = "lockin/accessibility"
+    }
+
+    private val scrollDayStatusesPrefKey = "scroll_day_statuses"
     private val trackedDailyTimeLimitKeys = listOf(
         "instagram_app",
         "youtube_app",
@@ -34,23 +40,12 @@ class MainActivity : FlutterActivity() {
         "facebook_reels",
         "facebook_watch",
     )
-    private val trackedUsagePackages = setOf(
-        "com.instagram.android",
-        "com.google.android.youtube",
-        "com.zhiliaoapp.musically",
-        "com.snapchat.android",
-        "com.facebook.katana",
-    )
-    private val trackedUsagePackagePrefixes = setOf(
-        "app.revanced.android.youtube",
-    )
-
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "lockin/accessibility",
+            ACCESSIBILITY_CHANNEL_NAME,
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "openAccessibilitySettings" -> {
@@ -92,6 +87,20 @@ class MainActivity : FlutterActivity() {
                 }
                 "getSavedBlockConfig" -> {
                     result.success(getSavedBlockConfig())
+                }
+                "setScrollDayStatus" -> {
+                    val dateKey = call.argument<String>("dateKey")
+                    val status = call.argument<Int>("status")
+                    if (dateKey == null || status == null) {
+                        result.error(
+                            "missing_scroll_day_status",
+                            "dateKey and status are required",
+                            null,
+                        )
+                    } else {
+                        setScrollDayStatus(dateKey, status)
+                        result.success(null)
+                    }
                 }
                 "setBlockedWebsites" -> {
                     val blockedWebsites =
@@ -151,32 +160,20 @@ class MainActivity : FlutterActivity() {
             return emptyList()
         }
 
-        val calendar = Calendar.getInstance()
-        val endTime = calendar.timeInMillis
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        calendar.set(Calendar.MILLISECOND, 0)
-        val startTime = calendar.timeInMillis
-        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val stats = usageStatsManager.queryUsageStats(
-            UsageStatsManager.INTERVAL_DAILY,
-            startTime,
-            endTime,
+        val todayWindow = getTodayWindow()
+        val foregroundMillisByPackage = getTrackedForegroundMillisByPackage(
+            startTime = todayWindow.first,
+            endTime = todayWindow.second,
         )
 
-        return stats
-            .filter { usage ->
-                isTrackedUsagePackage(usage.packageName) &&
-                    usage.totalTimeInForeground > 0
-            }
-            .map { usage ->
+        return foregroundMillisByPackage.entries
+            .map { entry ->
                 mapOf(
-                    "packageName" to usage.packageName,
-                    "minutes" to (usage.totalTimeInForeground / 60000L).toInt(),
+                    "packageName" to entry.key,
+                    "minutes" to (entry.value / 60000L).toInt(),
                 )
             }
-            .filter { usage -> usage["minutes"] as Int > 0 }
+            .filter { usage -> (usage["minutes"] as Int) > 0 }
     }
 
     private fun getInstalledTrackedPackages(): List<String> {
@@ -189,8 +186,101 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun isTrackedUsagePackage(packageName: String): Boolean {
-        return trackedUsagePackages.contains(packageName) ||
-            trackedUsagePackagePrefixes.any { prefix -> packageName.startsWith(prefix) }
+        return packageName == "com.instagram.android" ||
+            packageName == "com.google.android.youtube" ||
+            packageName == "com.zhiliaoapp.musically" ||
+            packageName == "com.snapchat.android" ||
+            packageName == "com.facebook.katana" ||
+            packageName.startsWith("app.revanced.android.youtube")
+    }
+
+    private fun getTodayWindow(): Pair<Long, Long> {
+        val calendar = Calendar.getInstance()
+        val endTime = calendar.timeInMillis
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        val startTime = calendar.timeInMillis
+        return startTime to endTime
+    }
+
+    private fun getTrackedForegroundMillisByPackage(
+        startTime: Long,
+        endTime: Long,
+    ): Map<String, Long> {
+        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
+        val event = UsageEvents.Event()
+        var currentForegroundPackage: String? = null
+        var currentForegroundStart = 0L
+        val totalsByPackage = mutableMapOf<String, Long>()
+
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            val packageName = event.packageName ?: continue
+            if (shouldIgnoreUsagePackage(packageName)) continue
+
+            when (event.eventType) {
+                UsageEvents.Event.ACTIVITY_RESUMED,
+                UsageEvents.Event.MOVE_TO_FOREGROUND,
+                -> {
+                    if (
+                        currentForegroundPackage != null &&
+                        event.timeStamp > currentForegroundStart
+                    ) {
+                        addTrackedDuration(
+                            totalsByPackage = totalsByPackage,
+                            packageName = currentForegroundPackage!!,
+                            durationMillis = event.timeStamp - currentForegroundStart,
+                        )
+                    }
+                    currentForegroundPackage = packageName
+                    currentForegroundStart = event.timeStamp
+                }
+
+                UsageEvents.Event.ACTIVITY_PAUSED,
+                UsageEvents.Event.MOVE_TO_BACKGROUND,
+                -> {
+                    if (
+                        currentForegroundPackage == packageName &&
+                        event.timeStamp > currentForegroundStart
+                    ) {
+                        addTrackedDuration(
+                            totalsByPackage = totalsByPackage,
+                            packageName = packageName,
+                            durationMillis = event.timeStamp - currentForegroundStart,
+                        )
+                        currentForegroundPackage = null
+                        currentForegroundStart = 0L
+                    }
+                }
+            }
+        }
+
+        if (currentForegroundPackage != null && endTime > currentForegroundStart) {
+            addTrackedDuration(
+                totalsByPackage = totalsByPackage,
+                packageName = currentForegroundPackage!!,
+                durationMillis = endTime - currentForegroundStart,
+            )
+        }
+
+        return totalsByPackage
+    }
+
+    private fun addTrackedDuration(
+        totalsByPackage: MutableMap<String, Long>,
+        packageName: String,
+        durationMillis: Long,
+    ) {
+        if (!isTrackedUsagePackage(packageName) || durationMillis <= 0L) return
+        totalsByPackage[packageName] = (totalsByPackage[packageName] ?: 0L) + durationMillis
+    }
+
+    private fun shouldIgnoreUsagePackage(packageName: String): Boolean {
+        return packageName == this.packageName ||
+            packageName == "com.android.systemui"
     }
 
     private fun setDailyTimeLimit(settingKey: String, minutes: Int?) {
@@ -221,13 +311,43 @@ class MainActivity : FlutterActivity() {
         val blockSettings = trackedBlockSettingKeys.associateWith { key ->
             prefs.getBoolean(key, false)
         }
+        val scrollDayStatuses = getScrollDayStatuses()
         val blockedWebsites = getBlockedWebsites()
 
         return mapOf(
             "dailyTimeLimits" to dailyTimeLimits,
             "blockSettings" to blockSettings,
+            "scrollDayStatuses" to scrollDayStatuses,
             "blockedWebsites" to blockedWebsites,
         )
+    }
+
+    private fun setScrollDayStatus(dateKey: String, status: Int) {
+        val currentStatuses = getScrollDayStatuses().toMutableMap()
+        currentStatuses[dateKey] = status
+        val serialized = JSONObject().apply {
+            currentStatuses.forEach { (key, value) ->
+                put(key, value)
+            }
+        }.toString()
+
+        getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(scrollDayStatusesPrefKey, serialized)
+            .apply()
+    }
+
+    private fun getScrollDayStatuses(): Map<String, Int> {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        val serialized = prefs.getString(scrollDayStatusesPrefKey, null) ?: return emptyMap()
+        val jsonObject = JSONObject(serialized)
+        val result = mutableMapOf<String, Int>()
+        val keys = jsonObject.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            result[key] = jsonObject.optInt(key)
+        }
+        return result
     }
 
     private fun setBlockedWebsites(blockedWebsites: List<Map<String, Any?>>) {

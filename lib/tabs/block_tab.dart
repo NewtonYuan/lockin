@@ -597,11 +597,31 @@ class _AppBlockCard extends StatelessWidget {
     final iconOpacity = isInstalled ? 1.0 : 0.35;
     final canExpand = isInstalled;
     final shouldShowItems = isInstalled && isExpanded;
+    final isDirectTimeLimitApp =
+        items.length == 1 && items.first.isTimeLimit;
+
+    if (isDirectTimeLimitApp) {
+      return _SingleTimeLimitAppButton(
+        appName: appName,
+        iconAssetPath: iconAssetPath,
+        isInstalled: isInstalled,
+        minutes: items.first.minutes,
+        onTap: isInstalled
+            ? () => showDailyTimeLimitPicker(
+                  context,
+                  initialMinutes: items.first.minutes,
+                  onTimeLimitSelected: (minutes) =>
+                      onSelectTimeLimit(items.first.keyName, minutes),
+                )
+            : null,
+      );
+    }
 
     return Material(
       color: appSurface,
       borderRadius: borderRadius,
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Ink(
             decoration: BoxDecoration(borderRadius: borderRadius),
@@ -694,24 +714,150 @@ class _AppBlockCard extends StatelessWidget {
               ),
             ),
           ),
-          if (shouldShowItems)
-            Padding(
-              padding: EdgeInsets.zero,
-              child: Column(
-                children: items
-                    .map(
-                      (item) => _BlockItemRow(
-                        item: item,
-                        onToggleChanged: (value) =>
-                            onToggleSetting(item.keyName, value),
-                        onTimeLimitSelected: (minutes) =>
-                            onSelectTimeLimit(item.keyName, minutes),
+          ClipRect(
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: shouldShowItems
+                  ? Padding(
+                      padding: EdgeInsets.zero,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: items
+                            .map(
+                              (item) => _BlockItemRow(
+                                item: item,
+                                onToggleChanged: (value) =>
+                                    onToggleSetting(item.keyName, value),
+                                onTimeLimitSelected: (minutes) =>
+                                    onSelectTimeLimit(item.keyName, minutes),
+                              ),
+                            )
+                            .toList(),
                       ),
                     )
-                    .toList(),
-              ),
+                  : const SizedBox.shrink(),
             ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _SingleTimeLimitAppButton extends StatelessWidget {
+  const _SingleTimeLimitAppButton({
+    required this.appName,
+    required this.iconAssetPath,
+    required this.isInstalled,
+    required this.minutes,
+    required this.onTap,
+  });
+
+  final String appName;
+  final String? iconAssetPath;
+  final bool isInstalled;
+  final int? minutes;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderRadius = BorderRadius.circular(8);
+    final titleColor = isInstalled ? appText : appMutedText;
+    final iconOpacity = isInstalled ? 1.0 : 0.35;
+
+    return Material(
+      color: appSurface,
+      borderRadius: borderRadius,
+      child: Ink(
+        decoration: BoxDecoration(borderRadius: borderRadius),
+        child: InkWell(
+          borderRadius: borderRadius,
+          splashColor: brand.withValues(alpha: 0.18),
+          highlightColor: appText.withValues(alpha: 0.04),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Opacity(
+                      opacity: iconOpacity,
+                      child: SizedBox.expand(
+                        child: iconAssetPath != null
+                            ? _BlockAppIcon(assetPath: iconAssetPath!)
+                            : Center(
+                                child: Text(
+                                  appName.substring(0, 1),
+                                  style: TextStyle(
+                                    color: titleColor,
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          appName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: titleColor,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (!isInstalled) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          '(Not Installed)',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: appMutedText,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (isInstalled) ...[
+                  Text(
+                    _formatMinutes(minutes),
+                    style: const TextStyle(
+                      color: appMutedText,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: appMutedText,
+                    size: 20,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -887,155 +1033,11 @@ class _BlockItemRow extends StatelessWidget {
   }
 
   Future<void> _showTimeLimitPicker(BuildContext context) async {
-    final initialMinutes = item.minutes != null && item.minutes! > 0
-        ? item.minutes!
-        : 0;
-    var selectedHour = (initialMinutes ~/ 60).clamp(0, 23);
-    var selectedMinute = _nearestMinuteInterval(initialMinutes % 60);
-    final hourController = FixedExtentScrollController(
-      initialItem: _hourValues.indexOf(selectedHour),
+    await showDailyTimeLimitPicker(
+      context,
+      initialMinutes: item.minutes,
+      onTimeLimitSelected: onTimeLimitSelected,
     );
-    final minuteController = FixedExtentScrollController(
-      initialItem: _minuteIntervals.indexOf(selectedMinute),
-    );
-
-    final selected = await showDialog<int>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              backgroundColor: appBackground,
-              surfaceTintColor: Colors.transparent,
-              titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-              contentPadding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
-              actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              title: Column(
-                children: [
-                  Text(
-                    'Set Daily Limit',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: appText,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    height: 180,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _DurationWheel(
-                            controller: hourController,
-                            values: _hourValues,
-                            labelBuilder: _formatHourOption,
-                            onSelectedItemChanged: (value) {
-                              setState(() {
-                                selectedHour = value;
-                              });
-                            },
-                          ),
-                        ),
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 6),
-                          child: Text(
-                            ':',
-                            style: TextStyle(
-                              color: appMutedText,
-                              fontSize: 28,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: _DurationWheel(
-                            controller: minuteController,
-                            values: _minuteIntervals,
-                            labelBuilder: _formatMinuteOption,
-                            onSelectedItemChanged: (value) {
-                              setState(() {
-                                selectedMinute = value;
-                              });
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  const Row(
-                    children: [
-                      Expanded(child: Divider(color: appBorder)),
-                      Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 12),
-                        child: Text(
-                          'OR',
-                          style: TextStyle(
-                            color: appMutedText,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      Expanded(child: Divider(color: appBorder)),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: TextButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(-10),
-                      child: const Text('10 Seconds'),
-                    ),
-                  ),
-                  SizedBox(
-                    width: double.infinity,
-                    child: TextButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(0),
-                      child: const Text('No Limit'),
-                    ),
-                  ),
-                  SizedBox(
-                    width: double.infinity,
-                    child: TextButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(-1),
-                      child: const Text('Block Completely'),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  const Divider(color: appBorder),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(
-                    dialogContext,
-                  ).pop((selectedHour * 60) + selectedMinute),
-                  child: const Text('Save'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    hourController.dispose();
-    minuteController.dispose();
-
-    if (selected != null) {
-      onTimeLimitSelected(selected == 0 ? null : selected);
-    }
   }
 }
 
@@ -1103,9 +1105,164 @@ int _nearestMinuteInterval(int minute) {
   );
 }
 
+Future<void> showDailyTimeLimitPicker(
+  BuildContext context, {
+  required int? initialMinutes,
+  required ValueChanged<int?> onTimeLimitSelected,
+}) async {
+  final resolvedInitialMinutes =
+      initialMinutes != null && initialMinutes > 0 ? initialMinutes : 0;
+  var selectedHour = (resolvedInitialMinutes ~/ 60).clamp(0, 23);
+  var selectedMinute = _nearestMinuteInterval(resolvedInitialMinutes % 60);
+  final hourController = FixedExtentScrollController(
+    initialItem: _BlockItemRow._hourValues.indexOf(selectedHour),
+  );
+  final minuteController = FixedExtentScrollController(
+    initialItem: _BlockItemRow._minuteIntervals.indexOf(selectedMinute),
+  );
+
+  final selected = await showDialog<int>(
+    context: context,
+    builder: (dialogContext) {
+      return StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            backgroundColor: appBackground,
+            surfaceTintColor: Colors.transparent,
+            titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+            contentPadding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+            actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            title: const Column(
+              children: [
+                Text(
+                  'Set Daily Limit',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: appText,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: 180,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _DurationWheel(
+                          controller: hourController,
+                          values: _BlockItemRow._hourValues,
+                          labelBuilder: _formatHourOption,
+                          onSelectedItemChanged: (value) {
+                            setState(() {
+                              selectedHour = value;
+                            });
+                          },
+                        ),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 6),
+                        child: Text(
+                          ':',
+                          style: TextStyle(
+                            color: appMutedText,
+                            fontSize: 28,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: _DurationWheel(
+                          controller: minuteController,
+                          values: _BlockItemRow._minuteIntervals,
+                          labelBuilder: _formatMinuteOption,
+                          onSelectedItemChanged: (value) {
+                            setState(() {
+                              selectedMinute = value;
+                            });
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Row(
+                  children: [
+                    Expanded(child: Divider(color: appBorder)),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      child: Text(
+                        'OR',
+                        style: TextStyle(
+                          color: appMutedText,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Expanded(child: Divider(color: appBorder)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(-10),
+                    child: const Text('10 Seconds'),
+                  ),
+                ),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(0),
+                    child: const Text('No Limit'),
+                  ),
+                ),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(-1),
+                    child: const Text('Block Completely'),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Divider(color: appBorder),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(
+                  dialogContext,
+                ).pop((selectedHour * 60) + selectedMinute),
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  hourController.dispose();
+  minuteController.dispose();
+
+  if (selected != null) {
+    onTimeLimitSelected(selected == 0 ? null : selected);
+  }
+}
+
 String _formatMinutes(int? minutes) {
   if (minutes == null) {
-    return 'None';
+    return 'No Limit';
   }
   if (minutes == -10) {
     return '10 secs';

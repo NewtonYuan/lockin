@@ -1,6 +1,7 @@
 package com.example.lockin
 
 import android.accessibilityservice.AccessibilityService
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
@@ -65,7 +66,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
             lastVisibleBlockedWebsiteByPackage[packageName] = null
         }
 
-        if (promptActive || isInstagramAllowed()) return
+        if (promptActive || isPackageTemporarilyAllowed(packageName)) return
         if (packageName == INSTAGRAM_PACKAGE_NAME) {
             if (!shouldOpenInstagramBlockPrompt(event, eventType)) return
             openInstagramPrompt()
@@ -88,9 +89,14 @@ class AppGuardAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    private fun isInstagramAllowed(): Boolean {
+    private fun isPackageTemporarilyAllowed(packageName: String): Boolean {
         val now = System.currentTimeMillis()
-        return now < instagramAllowedUntilMillis || now < promptSuppressedUntilMillis
+        if (now < promptSuppressedUntilMillis) return true
+        return when {
+            packageName == INSTAGRAM_PACKAGE_NAME -> now < instagramAllowedUntilMillis
+            isYouTubePackage(packageName) -> now < youTubeAllowedUntilMillis
+            else -> false
+        }
     }
 
     private fun shouldBlockPackage(packageName: String): Boolean {
@@ -136,6 +142,15 @@ class AppGuardAccessibilityService : AccessibilityService() {
     }
 
     private fun getTodayForegroundMillis(appLimit: AppLimit): Long {
+        val todayWindow = getTodayWindow()
+        return getForegroundMillisForAppLimit(
+            appLimit = appLimit,
+            startTime = todayWindow.first,
+            endTime = todayWindow.second,
+        )
+    }
+
+    private fun getTodayWindow(): Pair<Long, Long> {
         val calendar = Calendar.getInstance()
         val endTime = calendar.timeInMillis
         calendar.set(Calendar.HOUR_OF_DAY, 0)
@@ -143,15 +158,49 @@ class AppGuardAccessibilityService : AccessibilityService() {
         calendar.set(Calendar.SECOND, 0)
         calendar.set(Calendar.MILLISECOND, 0)
         val startTime = calendar.timeInMillis
+        return startTime to endTime
+    }
+
+    private fun getForegroundMillisForAppLimit(
+        appLimit: AppLimit,
+        startTime: Long,
+        endTime: Long,
+    ): Long {
         val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val stats = usageStatsManager.queryUsageStats(
-            UsageStatsManager.INTERVAL_DAILY,
-            startTime,
-            endTime,
-        )
-        val totalMillis = stats
-            .filter { usage -> appLimit.matches(usage.packageName) }
-            .sumOf { usage -> usage.totalTimeInForeground }
+        val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
+        val event = UsageEvents.Event()
+        val activeStartTimes = mutableMapOf<String, Long>()
+        var totalMillis = 0L
+
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            val packageName = event.packageName ?: continue
+            if (!appLimit.matches(packageName)) continue
+
+            when (event.eventType) {
+                UsageEvents.Event.ACTIVITY_RESUMED,
+                UsageEvents.Event.MOVE_TO_FOREGROUND,
+                -> {
+                    activeStartTimes[packageName] = event.timeStamp
+                }
+
+                UsageEvents.Event.ACTIVITY_PAUSED,
+                UsageEvents.Event.MOVE_TO_BACKGROUND,
+                -> {
+                    val start = activeStartTimes.remove(packageName) ?: continue
+                    if (event.timeStamp > start) {
+                        totalMillis += event.timeStamp - start
+                    }
+                }
+            }
+        }
+
+        activeStartTimes.values.forEach { start ->
+            if (endTime > start) {
+                totalMillis += endTime - start
+            }
+        }
+
         return totalMillis
     }
 
@@ -198,7 +247,8 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private fun openInstagramPrompt() {
         promptActive = true
         startActivity(
-            Intent(this, ConfirmInstagramActivity::class.java).apply {
+            Intent(this, ConfirmBlockerActivity::class.java).apply {
+                putExtra(ConfirmBlockerActivity.EXTRA_TARGET, ConfirmBlockerActivity.TARGET_INSTAGRAM)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
@@ -209,7 +259,8 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private fun openYouTubePrompt() {
         promptActive = true
         startActivity(
-            Intent(this, ConfirmInstagramActivity::class.java).apply {
+            Intent(this, ConfirmBlockerActivity::class.java).apply {
+                putExtra(ConfirmBlockerActivity.EXTRA_TARGET, ConfirmBlockerActivity.TARGET_YOUTUBE)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
@@ -480,6 +531,9 @@ class AppGuardAccessibilityService : AccessibilityService() {
         private var instagramAllowedUntilMillis = 0L
 
         @Volatile
+        private var youTubeAllowedUntilMillis = 0L
+
+        @Volatile
         private var promptSuppressedUntilMillis = 0L
 
         fun dismissPrompt() {
@@ -496,8 +550,16 @@ class AppGuardAccessibilityService : AccessibilityService() {
             )
         }
 
-        fun allowInstagramForMinutes(minutes: Int) {
-            instagramAllowedUntilMillis = System.currentTimeMillis() + minutes * 60 * 1000L
+        fun allowTargetForMinutes(target: String, minutes: Int) {
+            val allowedUntil = System.currentTimeMillis() + minutes * 60 * 1000L
+            when (target.lowercase()) {
+                ConfirmBlockerActivity.TARGET_YOUTUBE -> {
+                    youTubeAllowedUntilMillis = allowedUntil
+                }
+                else -> {
+                    instagramAllowedUntilMillis = allowedUntil
+                }
+            }
             promptActive = false
         }
     }
