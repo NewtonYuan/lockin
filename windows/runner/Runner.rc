@@ -92,9 +92,9 @@ BEGIN
             VALUE "CompanyName", "com.example" "\0"
             VALUE "FileDescription", "Tempus" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "lockin" "\0"
+            VALUE "InternalName", "tempus" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "lockin.exe" "\0"
+            VALUE "OriginalFilename", "tempus.exe" "\0"
             VALUE "ProductName", "Tempus" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END

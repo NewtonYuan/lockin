@@ -83,7 +83,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
-  static const _accessibilityChannel = MethodChannel('lockin/accessibility');
+  static const _accessibilityChannel = MethodChannel('tempus/accessibility');
   static const _partialScrollThresholdMinutes = 30;
   static const _navFadeDuration = Duration(milliseconds: 150);
 

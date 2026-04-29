@@ -1,4 +1,4 @@
-package com.example.lockin
+package com.example.tempus
 
 import android.app.AppOpsManager
 import android.app.usage.UsageEvents
@@ -17,7 +17,7 @@ import org.json.JSONObject
 
 open class MainActivity : FlutterActivity() {
     companion object {
-        const val ACCESSIBILITY_CHANNEL_NAME = "lockin/accessibility"
+        const val ACCESSIBILITY_CHANNEL_NAME = "tempus/accessibility"
     }
 
     private val scrollDayStatusesPrefKey = "scroll_day_statuses"

@@ -1,4 +1,4 @@
-package com.example.lockin
+package com.example.tempus
 
 import android.app.Activity
 import android.content.res.ColorStateList

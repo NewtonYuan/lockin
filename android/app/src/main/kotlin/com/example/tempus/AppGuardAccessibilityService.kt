@@ -1,4 +1,4 @@
-package com.example.lockin
+package com.example.tempus
 
 import android.accessibilityservice.AccessibilityService
 import android.app.usage.UsageEvents
