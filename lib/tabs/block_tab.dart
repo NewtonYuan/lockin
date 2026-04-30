@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -15,6 +17,39 @@ class BlockedWebsiteEntry {
   final DateTime blockedSince;
 }
 
+class CustomTrackedApp {
+  const CustomTrackedApp({
+    required this.appName,
+    required this.packageName,
+    this.iconBytes,
+  });
+
+  factory CustomTrackedApp.fromMap(Map<dynamic, dynamic> map) {
+    return CustomTrackedApp(
+      appName: map['appName'] as String? ?? '',
+      packageName: map['packageName'] as String? ?? '',
+      iconBytes: map['iconBytes'] as Uint8List?,
+    );
+  }
+
+  final String appName;
+  final String packageName;
+  final Uint8List? iconBytes;
+
+  String get settingKey => customTrackedAppSettingKey(packageName);
+
+  Map<String, Object?> toMap() => {
+    'appName': appName,
+    'packageName': packageName,
+    'iconBytes': iconBytes,
+  };
+}
+
+String customTrackedAppSettingKey(String packageName) {
+  final normalized = packageName.replaceAll(RegExp(r'[^a-zA-Z0-9]+'), '_');
+  return 'custom_app_$normalized';
+}
+
 class BlockScreen extends StatelessWidget {
   const BlockScreen({
     super.key,
@@ -22,11 +57,18 @@ class BlockScreen extends StatelessWidget {
     required this.selectedCategory,
     required this.expandedApps,
     required this.installedPackageNames,
+    required this.customTrackedApps,
+    required this.isEditingCustomApps,
     required this.blockedWebsites,
     required this.dailyTimeLimits,
     required this.blockSettings,
     required this.onAddWebsite,
     required this.onDeleteWebsite,
+    required this.onRequestInstalledApps,
+    required this.onAddCustomTrackedApp,
+    required this.onDeleteCustomTrackedApp,
+    required this.onToggleEditMode,
+    required this.onReorderCustomTrackedApps,
     required this.onSelectCategory,
     required this.onToggleExpanded,
     required this.onToggleSetting,
@@ -37,11 +79,18 @@ class BlockScreen extends StatelessWidget {
   final String selectedCategory;
   final Set<String> expandedApps;
   final Set<String>? installedPackageNames;
+  final List<CustomTrackedApp> customTrackedApps;
+  final bool isEditingCustomApps;
   final List<BlockedWebsiteEntry> blockedWebsites;
   final Map<String, int?> dailyTimeLimits;
   final Map<String, bool> blockSettings;
   final ValueChanged<String> onAddWebsite;
   final ValueChanged<BlockedWebsiteEntry> onDeleteWebsite;
+  final Future<List<CustomTrackedApp>> Function() onRequestInstalledApps;
+  final ValueChanged<CustomTrackedApp> onAddCustomTrackedApp;
+  final ValueChanged<CustomTrackedApp> onDeleteCustomTrackedApp;
+  final VoidCallback onToggleEditMode;
+  final void Function(int oldIndex, int newIndex) onReorderCustomTrackedApps;
   final ValueChanged<String> onSelectCategory;
   final ValueChanged<String> onToggleExpanded;
   final void Function(String settingKey, bool value) onToggleSetting;
@@ -59,6 +108,35 @@ class BlockScreen extends StatelessWidget {
               title: 'Block',
               onBack: onBackToHome,
               centerTitle: false,
+              trailing: selectedCategory == 'Apps'
+                  ? (isEditingCustomApps
+                      ? TextButton(
+                          onPressed: onToggleEditMode,
+                          child: const Text('Done'),
+                        )
+                      : IconButton(
+                          onPressed: customTrackedApps.isEmpty
+                              ? null
+                              : onToggleEditMode,
+                          icon: SvgPicture.asset(
+                            'assets/icons/edit.svg',
+                            width: 24,
+                            height: 24,
+                            colorFilter: ColorFilter.mode(
+                              customTrackedApps.isEmpty
+                                  ? appMutedText.withValues(alpha: 0.4)
+                                  : appText,
+                              BlendMode.srcIn,
+                            ),
+                          ),
+                          splashRadius: 20,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 40,
+                            minHeight: 40,
+                          ),
+                        ))
+                  : null,
             ),
           ),
         ),
@@ -89,133 +167,250 @@ class BlockScreen extends StatelessWidget {
                   onAddWebsite: onAddWebsite,
                   onDeleteWebsite: onDeleteWebsite,
                 )
-              else ...[
-                _AppBlockCard(
-                  appName: 'Instagram',
-                  iconAssetPath: 'assets/apps/instagram.svg',
-                  isInstalled: _isPackageInstalled(
-                    'com.instagram.android',
-                  ),
-                  isExpanded: expandedApps.contains('Instagram'),
-                  items: [
-                    _BlockItemData.timeLimit(
-                      keyName: 'instagram_app',
-                      label: 'Daily Time Limit',
-                      minutes: dailyTimeLimits['instagram_app'],
-                      iconAssetPath: 'assets/icons/timer.svg',
-                      iconSize: 24,
-                    ),
-                    _BlockItemData.toggle(
-                      keyName: 'instagram_reels',
-                      label: 'Block Reels',
-                      value: blockSettings['instagram_reels'] ?? false,
-                    ),
-                    _BlockItemData.toggle(
-                      keyName: 'instagram_explore',
-                      label: 'Block Stories',
-                      value: blockSettings['instagram_explore'] ?? false,
-                    ),
-                  ],
-                  onToggleExpanded: () => onToggleExpanded('Instagram'),
-                  onToggleSetting: onToggleSetting,
-                  onSelectTimeLimit: onSelectTimeLimit,
-                ),
-                const SizedBox(height: 14),
-                _AppBlockCard(
-                  appName: 'YouTube',
-                  iconAssetPath: 'assets/apps/youtube.svg',
-                  isInstalled: _isAnyPackageInstalled(
-                    exactPackageNames: ['com.google.android.youtube'],
-                    packagePrefixes: ['app.revanced.android.youtube'],
-                  ),
-                  isExpanded: expandedApps.contains('YouTube'),
-                  items: [
-                    _BlockItemData.timeLimit(
-                      keyName: 'youtube_app',
-                      label: 'Daily Time Limit',
-                      minutes: dailyTimeLimits['youtube_app'],
-                      iconAssetPath: 'assets/icons/timer.svg',
-                      iconSize: 24,
-                    ),
-                    _BlockItemData.toggle(
-                      keyName: 'youtube_shorts',
-                      label: 'Block Shorts',
-                      value: blockSettings['youtube_shorts'] ?? false,
-                    ),
-                  ],
-                  onToggleExpanded: () => onToggleExpanded('YouTube'),
-                  onToggleSetting: onToggleSetting,
-                  onSelectTimeLimit: onSelectTimeLimit,
-                ),
-                const SizedBox(height: 14),
-                _AppBlockCard(
-                  appName: 'TikTok',
-                  iconAssetPath: 'assets/apps/tiktok.svg',
-                  isInstalled: _isPackageInstalled(
-                    'com.zhiliaoapp.musically',
-                  ),
-                  isExpanded: expandedApps.contains('TikTok'),
-                  items: [
-                    _BlockItemData.timeLimit(
-                      keyName: 'tiktok_app',
-                      label: 'Daily Time Limit',
-                      minutes: dailyTimeLimits['tiktok_app'],
-                      iconAssetPath: 'assets/icons/timer.svg',
-                      iconSize: 24,
-                    ),
-                  ],
-                  onToggleExpanded: () => onToggleExpanded('TikTok'),
-                  onToggleSetting: onToggleSetting,
-                  onSelectTimeLimit: onSelectTimeLimit,
-                ),
-                const SizedBox(height: 14),
-                _AppBlockCard(
-                  appName: 'Snapchat',
-                  iconAssetPath: 'assets/apps/snapchat.svg',
-                  isInstalled: _isPackageInstalled(
-                    'com.snapchat.android',
-                  ),
-                  isExpanded: expandedApps.contains('Snapchat'),
-                  items: [
-                    _BlockItemData.timeLimit(
-                      keyName: 'snapchat_app',
-                      label: 'Daily Time Limit',
-                      minutes: dailyTimeLimits['snapchat_app'],
-                      iconAssetPath: 'assets/icons/timer.svg',
-                      iconSize: 24,
-                    ),
-                  ],
-                  onToggleExpanded: () => onToggleExpanded('Snapchat'),
-                  onToggleSetting: onToggleSetting,
-                  onSelectTimeLimit: onSelectTimeLimit,
-                ),
-                const SizedBox(height: 14),
-                _AppBlockCard(
-                  appName: 'Facebook',
-                  iconAssetPath: 'assets/apps/facebook.jpg',
-                  isInstalled: _isPackageInstalled(
-                    'com.facebook.katana',
-                  ),
-                  isExpanded: expandedApps.contains('Facebook'),
-                  items: [
-                    _BlockItemData.timeLimit(
-                      keyName: 'facebook_app',
-                      label: 'Daily Time Limit',
-                      minutes: dailyTimeLimits['facebook_app'],
-                      iconAssetPath: 'assets/icons/timer.svg',
-                      iconSize: 24,
-                    ),
-                  ],
-                  onToggleExpanded: () => onToggleExpanded('Facebook'),
-                  onToggleSetting: onToggleSetting,
-                  onSelectTimeLimit: onSelectTimeLimit,
-                ),
-              ],
+              else ..._buildAppCategoryChildren(context),
             ]),
           ),
         ),
       ],
     );
+  }
+
+  List<Widget> _buildAppCategoryChildren(BuildContext context) {
+    final children = <Widget>[
+      _AppBlockCard(
+        appName: 'Instagram',
+        iconAssetPath: 'assets/apps/instagram.svg',
+        isInstalled: _isPackageInstalled(
+          'com.instagram.android',
+        ),
+        isExpanded: expandedApps.contains('Instagram'),
+        items: [
+          _BlockItemData.timeLimit(
+            keyName: 'instagram_app',
+            label: 'Daily Time Limit',
+            minutes: dailyTimeLimits['instagram_app'],
+            iconAssetPath: 'assets/icons/timer.svg',
+            iconSize: 24,
+          ),
+          _BlockItemData.toggle(
+            keyName: 'instagram_reels',
+            label: 'Block Reels',
+            value: blockSettings['instagram_reels'] ?? false,
+          ),
+          _BlockItemData.toggle(
+            keyName: 'instagram_explore',
+            label: 'Block Stories',
+            value: blockSettings['instagram_explore'] ?? false,
+          ),
+        ],
+        onToggleExpanded: () => onToggleExpanded('Instagram'),
+        onToggleSetting: onToggleSetting,
+        onSelectTimeLimit: onSelectTimeLimit,
+      ),
+      const SizedBox(height: 14),
+      _AppBlockCard(
+        appName: 'YouTube',
+        iconAssetPath: 'assets/apps/youtube.svg',
+        isInstalled: _isAnyPackageInstalled(
+          exactPackageNames: ['com.google.android.youtube'],
+          packagePrefixes: ['app.revanced.android.youtube'],
+        ),
+        isExpanded: expandedApps.contains('YouTube'),
+        items: [
+          _BlockItemData.timeLimit(
+            keyName: 'youtube_app',
+            label: 'Daily Time Limit',
+            minutes: dailyTimeLimits['youtube_app'],
+            iconAssetPath: 'assets/icons/timer.svg',
+            iconSize: 24,
+          ),
+          _BlockItemData.toggle(
+            keyName: 'youtube_shorts',
+            label: 'Block Shorts',
+            value: blockSettings['youtube_shorts'] ?? false,
+          ),
+        ],
+        onToggleExpanded: () => onToggleExpanded('YouTube'),
+        onToggleSetting: onToggleSetting,
+        onSelectTimeLimit: onSelectTimeLimit,
+      ),
+      const SizedBox(height: 14),
+      _AppBlockCard(
+        appName: 'TikTok',
+        iconAssetPath: 'assets/apps/tiktok.svg',
+        isInstalled: _isPackageInstalled(
+          'com.zhiliaoapp.musically',
+        ),
+        isExpanded: expandedApps.contains('TikTok'),
+        items: [
+          _BlockItemData.timeLimit(
+            keyName: 'tiktok_app',
+            label: 'Daily Time Limit',
+            minutes: dailyTimeLimits['tiktok_app'],
+            iconAssetPath: 'assets/icons/timer.svg',
+            iconSize: 24,
+          ),
+        ],
+        onToggleExpanded: () => onToggleExpanded('TikTok'),
+        onToggleSetting: onToggleSetting,
+        onSelectTimeLimit: onSelectTimeLimit,
+      ),
+      const SizedBox(height: 14),
+      _AppBlockCard(
+        appName: 'Snapchat',
+        iconAssetPath: 'assets/apps/snapchat.svg',
+        isInstalled: _isPackageInstalled(
+          'com.snapchat.android',
+        ),
+        isExpanded: expandedApps.contains('Snapchat'),
+        items: [
+          _BlockItemData.timeLimit(
+            keyName: 'snapchat_app',
+            label: 'Daily Time Limit',
+            minutes: dailyTimeLimits['snapchat_app'],
+            iconAssetPath: 'assets/icons/timer.svg',
+            iconSize: 24,
+          ),
+        ],
+        onToggleExpanded: () => onToggleExpanded('Snapchat'),
+        onToggleSetting: onToggleSetting,
+        onSelectTimeLimit: onSelectTimeLimit,
+      ),
+      const SizedBox(height: 14),
+      _AppBlockCard(
+        appName: 'Facebook',
+        iconAssetPath: 'assets/apps/facebook.jpg',
+        isInstalled: _isPackageInstalled(
+          'com.facebook.katana',
+        ),
+        isExpanded: expandedApps.contains('Facebook'),
+        items: [
+          _BlockItemData.timeLimit(
+            keyName: 'facebook_app',
+            label: 'Daily Time Limit',
+            minutes: dailyTimeLimits['facebook_app'],
+            iconAssetPath: 'assets/icons/timer.svg',
+            iconSize: 24,
+          ),
+        ],
+        onToggleExpanded: () => onToggleExpanded('Facebook'),
+        onToggleSetting: onToggleSetting,
+        onSelectTimeLimit: onSelectTimeLimit,
+      ),
+    ];
+
+    if (customTrackedApps.isNotEmpty && isEditingCustomApps) {
+      children.add(const SizedBox(height: 14));
+      children.add(
+        ReorderableListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          buildDefaultDragHandles: false,
+          itemCount: customTrackedApps.length,
+          onReorder: onReorderCustomTrackedApps,
+          itemBuilder: (context, index) {
+            final app = customTrackedApps[index];
+            return Padding(
+              key: ValueKey('custom-app-${app.packageName}'),
+              padding: EdgeInsets.only(
+                bottom: index == customTrackedApps.length - 1 ? 0 : 14,
+              ),
+              child: _CustomTrackedAppCard(
+                app: app,
+                minutes: dailyTimeLimits[app.settingKey],
+                isEditing: true,
+                onTap: () {},
+                onDelete: () => onDeleteCustomTrackedApp(app),
+                trailing: ReorderableDragStartListener(
+                  index: index,
+                  child: const Padding(
+                    padding: EdgeInsets.only(left: 6),
+                    child: Icon(
+                      Icons.drag_handle_rounded,
+                      color: appMutedText,
+                      size: 22,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+      return children;
+    }
+
+    for (final app in customTrackedApps) {
+      children.add(const SizedBox(height: 14));
+      children.add(
+        _CustomTrackedAppCard(
+          app: app,
+          minutes: dailyTimeLimits[app.settingKey],
+          isEditing: false,
+          onTap: () => showDailyTimeLimitPicker(
+            context,
+            initialMinutes: dailyTimeLimits[app.settingKey],
+            onTimeLimitSelected: (minutes) =>
+                onSelectTimeLimit(app.settingKey, minutes),
+          ),
+          onDelete: () => onDeleteCustomTrackedApp(app),
+        ),
+      );
+    }
+
+    if (!isEditingCustomApps) {
+      children.add(const SizedBox(height: 14));
+      children.add(
+        _AddAppCard(
+          onTap: () => _promptForInstalledApp(context),
+        ),
+      );
+    }
+    return children;
+  }
+
+  Future<void> _promptForInstalledApp(BuildContext context) async {
+    final existingPackages = <String>{
+      'com.instagram.android',
+      'com.google.android.youtube',
+      'com.zhiliaoapp.musically',
+      'com.snapchat.android',
+      'com.facebook.katana',
+      ...customTrackedApps.map((app) => app.packageName),
+    };
+    final installedApps = await onRequestInstalledApps();
+    if (!context.mounted) return;
+
+    final availableApps = installedApps.where((app) {
+      if (existingPackages.contains(app.packageName)) {
+        return false;
+      }
+      if (app.packageName.startsWith('app.revanced.android.youtube')) {
+        return false;
+      }
+      return true;
+    }).toList()
+      ..sort((first, second) => first.appName.toLowerCase().compareTo(
+            second.appName.toLowerCase(),
+          ));
+
+    if (availableApps.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No additional installed apps available.')),
+      );
+      return;
+    }
+
+    final selectedApp = await showModalBottomSheet<CustomTrackedApp>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _InstalledAppPickerSheet(
+        installedApps: availableApps,
+      ),
+    );
+    if (selectedApp == null) return;
+    onAddCustomTrackedApp(selectedApp);
   }
 
   bool _isPackageInstalled(String packageName) {
@@ -232,6 +427,335 @@ class BlockScreen extends StatelessWidget {
       (packageName) =>
           exactPackageNames.contains(packageName) ||
           packagePrefixes.any((prefix) => packageName.startsWith(prefix)),
+    );
+  }
+}
+
+class _CustomTrackedAppCard extends StatelessWidget {
+  const _CustomTrackedAppCard({
+    required this.app,
+    required this.minutes,
+    required this.isEditing,
+    required this.onTap,
+    required this.onDelete,
+    this.trailing,
+  });
+
+  final CustomTrackedApp app;
+  final int? minutes;
+  final bool isEditing;
+  final VoidCallback onTap;
+  final VoidCallback onDelete;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderRadius = BorderRadius.circular(8);
+
+    return Material(
+      color: appSurface,
+      borderRadius: borderRadius,
+      child: Ink(
+        decoration: BoxDecoration(borderRadius: borderRadius),
+        child: InkWell(
+          borderRadius: borderRadius,
+          splashColor: brand.withValues(alpha: 0.18),
+          highlightColor: appText.withValues(alpha: 0.04),
+          onTap: isEditing ? null : onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: app.iconBytes != null
+                        ? Image.memory(
+                            app.iconBytes!,
+                            fit: BoxFit.fill,
+                          )
+                        : Center(
+                            child: Text(
+                              app.appName.isEmpty
+                                  ? '?'
+                                  : app.appName.substring(0, 1),
+                              style: const TextStyle(
+                                color: appText,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    app.appName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: appText,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Text(
+                  _formatMinutes(minutes),
+                  style: const TextStyle(
+                    color: appMutedText,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                if (isEditing) ...[
+                  IconButton(
+                    onPressed: onDelete,
+                    splashRadius: 20,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 24,
+                      minHeight: 24,
+                    ),
+                    icon: SvgPicture.asset(
+                      'assets/icons/delete_forever.svg',
+                      width: 22,
+                      height: 22,
+                      colorFilter: const ColorFilter.mode(
+                        appMutedText,
+                        BlendMode.srcIn,
+                      ),
+                    ),
+                  ),
+                  if (trailing != null) trailing!,
+                ] else
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: appMutedText,
+                    size: 20,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AddAppCard extends StatelessWidget {
+  const _AddAppCard({
+    required this.onTap,
+  });
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderRadius = BorderRadius.circular(8);
+
+    return Material(
+      color: appSurface,
+      borderRadius: borderRadius,
+      child: Ink(
+        decoration: BoxDecoration(borderRadius: borderRadius),
+        child: InkWell(
+          borderRadius: borderRadius,
+          splashColor: brand.withValues(alpha: 0.18),
+          highlightColor: appText.withValues(alpha: 0.04),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: appSurfaceStrong,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.add_rounded,
+                    color: brand,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Text(
+                    'Add App',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: appText,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: appMutedText,
+                  size: 20,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InstalledAppPickerSheet extends StatefulWidget {
+  const _InstalledAppPickerSheet({
+    required this.installedApps,
+  });
+
+  final List<CustomTrackedApp> installedApps;
+
+  @override
+  State<_InstalledAppPickerSheet> createState() => _InstalledAppPickerSheetState();
+}
+
+class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredApps = widget.installedApps.where((app) {
+      final normalizedQuery = _query.trim().toLowerCase();
+      if (normalizedQuery.isEmpty) return true;
+      return app.appName.toLowerCase().contains(normalizedQuery) ||
+          app.packageName.toLowerCase().contains(normalizedQuery);
+    }).toList();
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 12,
+          right: 12,
+          bottom: MediaQuery.viewInsetsOf(context).bottom + 12,
+          top: 24,
+        ),
+        child: Material(
+          color: appBackground,
+          borderRadius: BorderRadius.circular(20),
+          child: SizedBox(
+            height: 520,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: appBorder,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Select an Installed App',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: appText,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    onChanged: (value) {
+                      setState(() {
+                        _query = value;
+                      });
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'Search apps',
+                      prefixIcon: const Icon(Icons.search_rounded),
+                      filled: true,
+                      fillColor: appSurface,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: filteredApps.length,
+                      separatorBuilder: (_, _) => const Divider(
+                        height: 1,
+                        color: appBorder,
+                      ),
+                      itemBuilder: (context, index) {
+                        final app = filteredApps[index];
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
+                          leading: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: appSurfaceStrong,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: app.iconBytes != null
+                                  ? Image.memory(
+                                      app.iconBytes!,
+                                      fit: BoxFit.fill,
+                                    )
+                                  : Center(
+                                      child: Text(
+                                        app.appName.isEmpty
+                                            ? '?'
+                                            : app.appName
+                                                .substring(0, 1)
+                                                .toUpperCase(),
+                                        style: const TextStyle(
+                                          color: appText,
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          title: Text(
+                            app.appName,
+                            style: const TextStyle(
+                              color: appText,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          onTap: () => Navigator.of(context).pop(app),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -573,6 +1097,7 @@ class _AppBlockCard extends StatelessWidget {
   const _AppBlockCard({
     required this.appName,
     this.iconAssetPath,
+    this.iconBytes,
     required this.isInstalled,
     required this.isExpanded,
     required this.items,
@@ -583,6 +1108,7 @@ class _AppBlockCard extends StatelessWidget {
 
   final String appName;
   final String? iconAssetPath;
+  final Uint8List? iconBytes;
   final bool isInstalled;
   final bool isExpanded;
   final List<_BlockItemData> items;
@@ -604,6 +1130,7 @@ class _AppBlockCard extends StatelessWidget {
       return _SingleTimeLimitAppButton(
         appName: appName,
         iconAssetPath: iconAssetPath,
+        iconBytes: iconBytes,
         isInstalled: isInstalled,
         minutes: items.first.minutes,
         onTap: isInstalled
@@ -648,9 +1175,10 @@ class _AppBlockCard extends StatelessWidget {
                         child: Opacity(
                           opacity: iconOpacity,
                           child: SizedBox.expand(
-                            child: iconAssetPath != null
+                            child: iconAssetPath != null || iconBytes != null
                                 ? _BlockAppIcon(
-                                    assetPath: iconAssetPath!,
+                                    assetPath: iconAssetPath,
+                                    iconBytes: iconBytes,
                                   )
                                 : Center(
                                     child: Text(
@@ -750,6 +1278,7 @@ class _SingleTimeLimitAppButton extends StatelessWidget {
   const _SingleTimeLimitAppButton({
     required this.appName,
     required this.iconAssetPath,
+    required this.iconBytes,
     required this.isInstalled,
     required this.minutes,
     required this.onTap,
@@ -757,6 +1286,7 @@ class _SingleTimeLimitAppButton extends StatelessWidget {
 
   final String appName;
   final String? iconAssetPath;
+  final Uint8List? iconBytes;
   final bool isInstalled;
   final int? minutes;
   final VoidCallback? onTap;
@@ -792,8 +1322,11 @@ class _SingleTimeLimitAppButton extends StatelessWidget {
                     child: Opacity(
                       opacity: iconOpacity,
                       child: SizedBox.expand(
-                        child: iconAssetPath != null
-                            ? _BlockAppIcon(assetPath: iconAssetPath!)
+                        child: iconAssetPath != null || iconBytes != null
+                            ? _BlockAppIcon(
+                                assetPath: iconAssetPath,
+                                iconBytes: iconBytes,
+                              )
                             : Center(
                                 child: Text(
                                   appName.substring(0, 1),
@@ -865,21 +1398,30 @@ class _SingleTimeLimitAppButton extends StatelessWidget {
 
 class _BlockAppIcon extends StatelessWidget {
   const _BlockAppIcon({
-    required this.assetPath,
-  });
+    this.assetPath,
+    this.iconBytes,
+  }) : assert(assetPath != null || iconBytes != null);
 
-  final String assetPath;
+  final String? assetPath;
+  final Uint8List? iconBytes;
 
   @override
   Widget build(BuildContext context) {
-    if (assetPath.toLowerCase().endsWith('.svg')) {
+    if (iconBytes != null) {
+      return Image.memory(
+        iconBytes!,
+        fit: BoxFit.fill,
+      );
+    }
+    final resolvedAssetPath = assetPath!;
+    if (resolvedAssetPath.toLowerCase().endsWith('.svg')) {
       return SvgPicture.asset(
-        assetPath,
+        resolvedAssetPath,
         fit: BoxFit.fill,
       );
     }
     return Image.asset(
-      assetPath,
+      resolvedAssetPath,
       fit: BoxFit.fill,
     );
   }
@@ -1318,23 +1860,4 @@ class _BlockItemData {
   final String? iconAssetPath;
   final double iconSize;
   final bool isTimeLimit;
-}
-
-class _OverviewCard extends StatelessWidget {
-  const _OverviewCard({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: appSurface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: appBorder),
-      ),
-      child: child,
-    );
-  }
 }

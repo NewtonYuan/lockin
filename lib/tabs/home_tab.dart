@@ -470,6 +470,62 @@ class _ScrollMinutesRing extends StatelessWidget {
                   ),
                 ],
               ),
+              Positioned(
+                top: 170,
+                child: Tooltip(
+                  richMessage: WidgetSpan(
+                    child: RichText(
+                      text: const TextSpan(
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                        ),
+                        children: [
+                          TextSpan(text: 'Only counting apps listed in '),
+                          WidgetSpan(
+                            alignment: PlaceholderAlignment.middle,
+                            child: SizedBox(
+                              width: 13,
+                              height: 13,
+                              child: _TooltipBlockIcon(),
+                            ),
+                          ),
+                          TextSpan(text: ' Block'),
+                        ],
+                      ),
+                    ),
+                  ),
+                  triggerMode: TooltipTriggerMode.tap,
+                  waitDuration: Duration.zero,
+                  showDuration: Duration(seconds: 3),
+                  preferBelow: true,
+                  textStyle: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: appText.withValues(alpha: 0.94),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  child: SvgPicture.asset(
+                    'assets/icons/help.svg',
+                    width: 22,
+                    height: 22,
+                    colorFilter: const ColorFilter.mode(
+                      brand,
+                      BlendMode.srcIn,
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -481,6 +537,9 @@ class _ScrollMinutesRing extends StatelessWidget {
 String _formatTodayDuration(int totalMinutes) {
   final hours = totalMinutes ~/ 60;
   final minutes = totalMinutes % 60;
+  if (hours == 0) {
+    return '$minutes mins';
+  }
   return '$hours hrs, $minutes mins';
 }
 
@@ -1035,14 +1094,6 @@ class AppUsageSegment {
     required this.color,
   });
 
-  factory AppUsageSegment.fromJson(Map<String, Object> json) {
-    return AppUsageSegment(
-      appName: json['appName']! as String,
-      minutes: json['minutes']! as int,
-      color: _colorFromHex(json['color']! as String),
-    );
-  }
-
   final String appName;
   final int minutes;
   final Color color;
@@ -1146,11 +1197,6 @@ class _SegmentedRingPainter extends CustomPainter {
   bool shouldRepaint(_SegmentedRingPainter oldDelegate) {
     return segments != oldDelegate.segments;
   }
-}
-
-Color _colorFromHex(String hex) {
-  final normalized = hex.replaceFirst('#', '');
-  return Color(int.parse('FF$normalized', radix: 16));
 }
 
 class _RestrictedAppsTrail extends StatelessWidget {
@@ -1310,6 +1356,21 @@ class _RestrictedAppIconData {
 
   final String settingKey;
   final String assetPath;
+}
+
+class _TooltipBlockIcon extends StatelessWidget {
+  const _TooltipBlockIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    return SvgPicture.asset(
+      'assets/icons/block.svg',
+      colorFilter: const ColorFilter.mode(
+        Colors.white,
+        BlendMode.srcIn,
+      ),
+    );
+  }
 }
 
 class _MonthArrowButton extends StatelessWidget {

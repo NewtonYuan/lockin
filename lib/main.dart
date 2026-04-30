@@ -55,6 +55,18 @@ class _TrackedUsageApp {
   final Color color;
 }
 
+class _CustomUsageApp {
+  const _CustomUsageApp({
+    required this.appName,
+    required this.packageName,
+    required this.color,
+  });
+
+  final String appName;
+  final String packageName;
+  final Color color;
+}
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -99,8 +111,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   List<AppUsageSegment> _usageSegments = const [];
   final Map<String, ScrollDayStatus> _scrollDayStatuses = {};
   Set<String>? _installedTrackedPackages;
+  List<CustomTrackedApp> _customTrackedApps = const [];
   final List<BlockedWebsiteEntry> _blockedWebsites = [];
   String _blockCategory = 'Apps';
+  bool _isEditingCustomApps = false;
   final Set<String> _expandedApps = {};
   final Map<String, int?> _dailyTimeLimits = {
     'instagram_app': null,
@@ -262,12 +276,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           savedConfig['scrollDayStatuses'] as Map<dynamic, dynamic>?;
       final rawBlockedWebsites =
           savedConfig['blockedWebsites'] as List<dynamic>?;
+      final rawCustomTrackedApps =
+          savedConfig['customTrackedApps'] as List<dynamic>?;
 
       setState(() {
         if (rawDailyTimeLimits != null) {
           for (final entry in rawDailyTimeLimits.entries) {
             final key = entry.key;
-            if (key is String && _dailyTimeLimits.containsKey(key)) {
+            if (key is String) {
               final value = entry.value;
               _dailyTimeLimits[key] = value is int ? value : null;
             }
@@ -319,7 +335,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               }).where((entry) => entry.domain.isNotEmpty),
             );
         }
+
+        if (rawCustomTrackedApps != null) {
+          _customTrackedApps = rawCustomTrackedApps
+              .whereType<Map>()
+              .map(CustomTrackedApp.fromMap)
+              .where((entry) => entry.appName.isNotEmpty && entry.packageName.isNotEmpty)
+              .toList();
+
+          for (final app in _customTrackedApps) {
+            _dailyTimeLimits.putIfAbsent(app.settingKey, () => null);
+          }
+        }
       });
+      _refreshUsageStats();
     } on PlatformException {
       // Android-only persistence. Other platforms use in-memory defaults.
     } on MissingPluginException {
@@ -381,6 +410,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _persistCustomTrackedApps() async {
+    try {
+      await _accessibilityChannel.invokeMethod<void>(
+        'setCustomTrackedApps',
+        {
+          'customTrackedApps': _customTrackedApps
+              .map((app) => app.toMap())
+              .toList(),
+        },
+      );
+    } on PlatformException {
+      // Android-only persistence. Other platforms keep local UI state only.
+    } on MissingPluginException {
+      // Android-only persistence. Other platforms keep local UI state only.
+    }
+  }
+
   Future<void> _persistTodayScrollStatus(ScrollDayStatus status) async {
     final dateKey = _dateKey(DateTime.now());
     try {
@@ -418,6 +464,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       setState(() {
         _installedTrackedPackages = null;
       });
+    }
+  }
+
+  Future<List<CustomTrackedApp>> _requestInstalledApps() async {
+    try {
+      final installedApps =
+          await _accessibilityChannel.invokeListMethod<dynamic>(
+        'getInstalledApps',
+      );
+      if (installedApps == null) return const [];
+      return installedApps
+          .whereType<Map>()
+          .map(CustomTrackedApp.fromMap)
+          .where((entry) => entry.appName.isNotEmpty && entry.packageName.isNotEmpty)
+          .toList();
+    } on PlatformException {
+      return const [];
+    } on MissingPluginException {
+      return const [];
     }
   }
 
@@ -501,7 +566,44 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       );
     }
 
+    for (final app in _customUsageApps) {
+      final totalMinutes = minutesByPackage[app.packageName] ?? 0;
+      if (totalMinutes <= 0) continue;
+      segments.add(
+        AppUsageSegment(
+          appName: app.appName,
+          minutes: totalMinutes,
+          color: app.color,
+        ),
+      );
+    }
+
     return segments;
+  }
+
+  List<_CustomUsageApp> get _customUsageApps {
+    return _customTrackedApps.map((app) {
+      return _CustomUsageApp(
+        appName: app.appName,
+        packageName: app.packageName,
+        color: _colorForPackageName(app.packageName),
+      );
+    }).toList();
+  }
+
+  Color _colorForPackageName(String packageName) {
+    const palette = [
+      Color(0xFF00688F),
+      Color(0xFF2D6A4F),
+      Color(0xFFBC6C25),
+      Color(0xFFB56576),
+      Color(0xFF355070),
+      Color(0xFF6D597A),
+      Color(0xFF588157),
+      Color(0xFF9C6644),
+    ];
+    final index = packageName.hashCode.abs() % palette.length;
+    return palette[index];
   }
 
   Future<void> _loadAppInstallDate() async {
@@ -678,14 +780,63 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         selectedCategory: _blockCategory,
         expandedApps: _expandedApps,
         installedPackageNames: _installedTrackedPackages,
+        customTrackedApps: _customTrackedApps,
+        isEditingCustomApps: _isEditingCustomApps,
         blockedWebsites: _blockedWebsites,
         dailyTimeLimits: _dailyTimeLimits,
         blockSettings: _blockSettings,
         onAddWebsite: _addBlockedWebsite,
         onDeleteWebsite: _deleteBlockedWebsite,
+        onRequestInstalledApps: _requestInstalledApps,
+        onAddCustomTrackedApp: (app) {
+          final alreadyExists = _customTrackedApps.any(
+            (entry) => entry.packageName == app.packageName,
+          );
+          if (alreadyExists) return;
+          setState(() {
+            _customTrackedApps = [
+              ..._customTrackedApps,
+              app,
+            ];
+            _dailyTimeLimits.putIfAbsent(app.settingKey, () => null);
+          });
+          _persistCustomTrackedApps();
+          _refreshUsageStats();
+        },
+        onDeleteCustomTrackedApp: (app) {
+          setState(() {
+            _customTrackedApps = _customTrackedApps
+                .where((entry) => entry.packageName != app.packageName)
+                .toList();
+            _dailyTimeLimits.remove(app.settingKey);
+          });
+          _persistCustomTrackedApps();
+          _setNativeDailyTimeLimit(app.settingKey, null);
+          _refreshUsageStats();
+        },
+        onToggleEditMode: () {
+          setState(() {
+            _isEditingCustomApps = !_isEditingCustomApps;
+          });
+        },
+        onReorderCustomTrackedApps: (oldIndex, newIndex) {
+          setState(() {
+            if (newIndex > oldIndex) {
+              newIndex -= 1;
+            }
+            final reorderedApps = [..._customTrackedApps];
+            final movedApp = reorderedApps.removeAt(oldIndex);
+            reorderedApps.insert(newIndex, movedApp);
+            _customTrackedApps = reorderedApps;
+          });
+          _persistCustomTrackedApps();
+        },
         onSelectCategory: (category) {
           setState(() {
             _blockCategory = category;
+            if (category != 'Apps') {
+              _isEditingCustomApps = false;
+            }
           });
         },
         onToggleExpanded: (appName) {

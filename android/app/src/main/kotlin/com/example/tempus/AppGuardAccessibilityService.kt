@@ -100,7 +100,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
     }
 
     private fun shouldBlockPackage(packageName: String): Boolean {
-        val appLimit = trackedAppLimits.firstOrNull { appLimit ->
+        val appLimit = getTrackedAppLimits().firstOrNull { appLimit ->
             appLimit.matches(packageName)
         } ?: return false
         val limitMinutes = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -472,6 +472,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
     companion object {
         const val PREFS_NAME = "tempus_app_guard"
         const val BLOCKED_WEBSITES_PREF_KEY = "blocked_websites"
+        const val CUSTOM_TRACKED_APPS_PREF_KEY = "custom_tracked_apps"
         const val TEN_SECOND_LIMIT_VALUE = -10
         const val INSTAGRAM_PACKAGE_NAME = "com.instagram.android"
         const val YOUTUBE_PACKAGE_NAME = "com.google.android.youtube"
@@ -497,7 +498,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
             "com.sec.android.app.sbrowser",
             "com.opera.browser",
         )
-        private val trackedAppLimits = listOf(
+        private val builtInTrackedAppLimits = listOf(
             AppLimit(
                 settingKey = "instagram_app",
                 packageNames = setOf("com.instagram.android"),
@@ -563,6 +564,39 @@ class AppGuardAccessibilityService : AccessibilityService() {
             promptActive = false
         }
     }
+
+    private fun getTrackedAppLimits(): List<AppLimit> {
+        return buildList {
+            addAll(builtInTrackedAppLimits)
+            addAll(
+                getCustomTrackedApps().map { app ->
+                    AppLimit(
+                        settingKey = customTrackedAppSettingKey(app.packageName),
+                        packageNames = setOf(app.packageName),
+                    )
+                },
+            )
+        }
+    }
+
+    private fun getCustomTrackedApps(): List<CustomTrackedAppConfig> {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val serialized = prefs.getString(CUSTOM_TRACKED_APPS_PREF_KEY, null) ?: return emptyList()
+        val jsonArray = JSONArray(serialized)
+        return List(jsonArray.length()) { index ->
+            val entry = jsonArray.getJSONObject(index)
+            CustomTrackedAppConfig(
+                appName = entry.optString("appName"),
+                packageName = entry.optString("packageName"),
+            )
+        }.filter { app ->
+            app.packageName.isNotBlank()
+        }
+    }
+
+    private fun customTrackedAppSettingKey(packageName: String): String {
+        return "custom_app_" + packageName.replace(Regex("[^A-Za-z0-9]+"), "_")
+    }
 }
 
 private data class AppLimit(
@@ -575,3 +609,8 @@ private data class AppLimit(
             packagePrefixes.any { prefix -> packageName.startsWith(prefix) }
     }
 }
+
+private data class CustomTrackedAppConfig(
+    val appName: String,
+    val packageName: String,
+)

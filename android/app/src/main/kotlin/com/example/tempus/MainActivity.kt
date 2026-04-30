@@ -6,11 +6,17 @@ import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.provider.Settings
 import android.os.Process
+import android.util.Base64
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
 import java.util.Calendar
 import org.json.JSONArray
 import org.json.JSONObject
@@ -21,7 +27,8 @@ open class MainActivity : FlutterActivity() {
     }
 
     private val scrollDayStatusesPrefKey = "scroll_day_statuses"
-    private val trackedDailyTimeLimitKeys = listOf(
+    private val customTrackedAppsPrefKey = "custom_tracked_apps"
+    private val builtInTrackedDailyTimeLimitKeys = listOf(
         "instagram_app",
         "youtube_app",
         "tiktok_app",
@@ -119,6 +126,23 @@ open class MainActivity : FlutterActivity() {
                 "getInstalledTrackedPackages" -> {
                     result.success(getInstalledTrackedPackages())
                 }
+                "getInstalledApps" -> {
+                    result.success(getInstalledApps())
+                }
+                "setCustomTrackedApps" -> {
+                    val customTrackedApps =
+                        call.argument<List<Map<String, Any?>>>("customTrackedApps")
+                    if (customTrackedApps == null) {
+                        result.error(
+                            "missing_custom_tracked_apps",
+                            "customTrackedApps is required",
+                            null,
+                        )
+                    } else {
+                        setCustomTrackedApps(customTrackedApps)
+                        result.success(null)
+                    }
+                }
                 "getFirstInstallTime" -> {
                     result.success(
                         packageManager.getPackageInfo(packageName, 0).firstInstallTime,
@@ -185,13 +209,28 @@ open class MainActivity : FlutterActivity() {
         return launcherPackages.filter { packageName -> isTrackedUsagePackage(packageName) }
     }
 
+    private fun getInstalledApps(): List<Map<String, Any>> {
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return packageManager
+            .queryIntentActivities(launcherIntent, 0)
+            .mapNotNull { resolveInfo ->
+                val activityInfo = resolveInfo.activityInfo ?: return@mapNotNull null
+                val appPackageName = activityInfo.packageName ?: return@mapNotNull null
+                if (appPackageName == packageName) return@mapNotNull null
+                mapOf(
+                    "appName" to resolveInfo.loadLabel(packageManager).toString(),
+                    "packageName" to appPackageName,
+                    "iconBytes" to encodeDrawableToPngBytes(
+                        resolveInfo.loadIcon(packageManager),
+                    ),
+                )
+            }
+            .distinctBy { app -> app["packageName"] }
+            .sortedBy { app -> (app["appName"] as? String)?.lowercase() ?: "" }
+    }
+
     private fun isTrackedUsagePackage(packageName: String): Boolean {
-        return packageName == "com.instagram.android" ||
-            packageName == "com.google.android.youtube" ||
-            packageName == "com.zhiliaoapp.musically" ||
-            packageName == "com.snapchat.android" ||
-            packageName == "com.facebook.katana" ||
-            packageName.startsWith("app.revanced.android.youtube")
+        return getTrackedAppLimits().any { appLimit -> appLimit.matches(packageName) }
     }
 
     private fun getTodayWindow(): Pair<Long, Long> {
@@ -305,7 +344,7 @@ open class MainActivity : FlutterActivity() {
 
     private fun getSavedBlockConfig(): Map<String, Any> {
         val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
-        val dailyTimeLimits = trackedDailyTimeLimitKeys.associateWith { key ->
+        val dailyTimeLimits = getTrackedDailyTimeLimitKeys().associateWith { key ->
             if (prefs.contains(key)) prefs.getInt(key, 0) else null
         }
         val blockSettings = trackedBlockSettingKeys.associateWith { key ->
@@ -313,12 +352,14 @@ open class MainActivity : FlutterActivity() {
         }
         val scrollDayStatuses = getScrollDayStatuses()
         val blockedWebsites = getBlockedWebsites()
+        val customTrackedApps = getCustomTrackedApps()
 
         return mapOf(
             "dailyTimeLimits" to dailyTimeLimits,
             "blockSettings" to blockSettings,
             "scrollDayStatuses" to scrollDayStatuses,
             "blockedWebsites" to blockedWebsites,
+            "customTrackedApps" to customTrackedApps,
         )
     }
 
@@ -368,6 +409,30 @@ open class MainActivity : FlutterActivity() {
             .apply()
     }
 
+    private fun setCustomTrackedApps(customTrackedApps: List<Map<String, Any?>>) {
+        val serialized = JSONArray().apply {
+            customTrackedApps.forEach { app ->
+                put(
+                    JSONObject().apply {
+                        put("appName", app["appName"] as? String ?: "")
+                        put("packageName", app["packageName"] as? String ?: "")
+                        put(
+                            "iconBytes",
+                            (app["iconBytes"] as? ByteArray)?.let { iconBytes ->
+                                Base64.encodeToString(iconBytes, Base64.NO_WRAP)
+                            },
+                        )
+                    },
+                )
+            }
+        }.toString()
+
+        getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(customTrackedAppsPrefKey, serialized)
+            .apply()
+    }
+
     private fun getBlockedWebsites(): List<Map<String, Any>> {
         val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
         val serialized = prefs.getString("blocked_websites", null) ?: return emptyList()
@@ -381,4 +446,116 @@ open class MainActivity : FlutterActivity() {
             )
         }
     }
+
+    private fun getCustomTrackedApps(): List<Map<String, Any>> {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        val serialized = prefs.getString(customTrackedAppsPrefKey, null) ?: return emptyList()
+        val jsonArray = JSONArray(serialized)
+
+        return List<Map<String, Any>>(jsonArray.length()) { index ->
+            val entry = jsonArray.getJSONObject(index)
+            buildMap<String, Any> {
+                put("appName", entry.optString("appName"))
+                put("packageName", entry.optString("packageName"))
+                put(
+                    "iconBytes",
+                    entry.optString("iconBytes")
+                        .takeIf { it.isNotBlank() }
+                        ?.let { encoded -> Base64.decode(encoded, Base64.DEFAULT) }
+                        ?: ByteArray(0),
+                )
+            }
+        }.filter { entry ->
+            !(entry["appName"] as? String).isNullOrBlank() &&
+                !(entry["packageName"] as? String).isNullOrBlank()
+        }
+    }
+
+    private fun getTrackedDailyTimeLimitKeys(): List<String> {
+        return buildList {
+            addAll(builtInTrackedDailyTimeLimitKeys)
+            addAll(
+                getCustomTrackedApps().mapNotNull { app ->
+                    (app["packageName"] as? String)
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let(::customTrackedAppSettingKey)
+                },
+            )
+        }
+    }
+
+    private fun getTrackedAppLimits(): List<AppLimit> {
+        return buildList {
+            addAll(builtInTrackedAppLimits)
+            addAll(
+                getCustomTrackedApps().mapNotNull { app ->
+                    val appPackageName = (app["packageName"] as? String)
+                        ?.takeIf { it.isNotBlank() }
+                        ?: return@mapNotNull null
+                    AppLimit(
+                        settingKey = customTrackedAppSettingKey(appPackageName),
+                        packageNames = setOf(appPackageName),
+                    )
+                },
+            )
+        }
+    }
+
+    private fun customTrackedAppSettingKey(packageName: String): String {
+        return "custom_app_" + packageName.replace(Regex("[^A-Za-z0-9]+"), "_")
+    }
+
+    private fun encodeDrawableToPngBytes(drawable: Drawable): ByteArray {
+        val bitmap = when (drawable) {
+            is BitmapDrawable -> drawable.bitmap
+            else -> {
+                val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 96
+                val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 96
+                Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
+                    val canvas = Canvas(bitmap)
+                    drawable.setBounds(0, 0, canvas.width, canvas.height)
+                    drawable.draw(canvas)
+                }
+            }
+        }
+        return ByteArrayOutputStream().use { outputStream ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+            outputStream.toByteArray()
+        }
+    }
+
+    private data class AppLimit(
+        val settingKey: String,
+        val packageNames: Set<String>,
+        val packagePrefixes: Set<String> = emptySet(),
+    ) {
+        fun matches(packageName: String): Boolean {
+            return packageNames.contains(packageName) ||
+                packagePrefixes.any { prefix -> packageName.startsWith(prefix) }
+        }
+    }
+
+    private val builtInTrackedAppLimits = listOf(
+        AppLimit(
+            settingKey = "instagram_app",
+            packageNames = setOf("com.instagram.android"),
+        ),
+        AppLimit(
+            settingKey = "youtube_app",
+            packageNames = setOf("com.google.android.youtube"),
+            packagePrefixes = setOf("app.revanced.android.youtube"),
+        ),
+        AppLimit(
+            settingKey = "tiktok_app",
+            packageNames = setOf("com.zhiliaoapp.musically"),
+        ),
+        AppLimit(
+            settingKey = "snapchat_app",
+            packageNames = setOf("com.snapchat.android"),
+        ),
+        AppLimit(
+            settingKey = "facebook_app",
+            packageNames = setOf("com.facebook.katana"),
+        ),
+    )
 }

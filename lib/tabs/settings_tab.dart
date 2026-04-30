@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../brand.dart';
 import 'sticky_header.dart';
 
-class SettingsTab extends StatefulWidget {
+class SettingsTab extends StatelessWidget {
   const SettingsTab({
     super.key,
     required this.onBackToHome,
@@ -20,11 +20,6 @@ class SettingsTab extends StatefulWidget {
   final bool isUsageAccessAllowed;
 
   @override
-  State<SettingsTab> createState() => _SettingsTabState();
-}
-
-class _SettingsTabState extends State<SettingsTab> {
-  @override
   Widget build(BuildContext context) {
     return CustomScrollView(
       slivers: [
@@ -34,7 +29,7 @@ class _SettingsTabState extends State<SettingsTab> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: StickyTitleHeader(
               title: 'Settings',
-              onBack: widget.onBackToHome,
+              onBack: onBackToHome,
               centerTitle: false,
             ),
           ),
@@ -60,16 +55,16 @@ class _SettingsTabState extends State<SettingsTab> {
                   _SettingsRow(
                     icon: Icons.accessibility_new_rounded,
                     title: 'Accessibility',
-                    value: widget.isAccessibilityAllowed
+                    value: isAccessibilityAllowed
                         ? 'Allowed'
                         : 'Denied',
-                    onTap: widget.onOpenAccessibilitySettings,
+                    onTap: onOpenAccessibilitySettings,
                   ),
                   _SettingsRow(
                     icon: Icons.query_stats_rounded,
                     title: 'Usage Access',
-                    value: widget.isUsageAccessAllowed ? 'Allowed' : 'Denied',
-                    onTap: widget.onOpenUsageAccessSettings,
+                    value: isUsageAccessAllowed ? 'Allowed' : 'Denied',
+                    onTap: onOpenUsageAccessSettings,
                   ),
                 ],
               ),

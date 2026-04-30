@@ -72,6 +72,8 @@ flutter:
     - assets/icons/notifications.svg
     - assets/icons/delete_forever.svg
     - assets/icons/install_day_star.svg
+    - assets/icons/help.svg
+    - assets/icons/edit.svg
     - assets/images/through_the_park_empty.svg
     - assets/images/statistics_coming_soon.svg
 
