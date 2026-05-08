@@ -17,6 +17,9 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private var lastForegroundPackage: String? = null
     private val enforcementHandler = Handler(Looper.getMainLooper())
     private val lastVisibleBlockedWebsiteByPackage = mutableMapOf<String, String?>()
+    private var promptTarget: String? = null
+    private var lastInstagramReelsScanAtMillis = 0L
+    private var instagramReelsDetectedUntilMillis = 0L
 
     override fun onServiceConnected() {
         activeService = this
@@ -40,6 +43,16 @@ class AppGuardAccessibilityService : AccessibilityService() {
         }
         if (packageName != lastForegroundPackage) {
             lastForegroundPackage = packageName
+            if (packageName != INSTAGRAM_PACKAGE_NAME) {
+                clearInstagramReelsDetectionCache()
+            }
+            if (
+                promptActive &&
+                promptTarget != null &&
+                shouldDismissPromptForPackage(packageName, promptTarget!!)
+            ) {
+                dismissPromptOverlay()
+            }
         }
 
         if (packageName == INSTAGRAM_PACKAGE_NAME && INSTAGRAM_DEBUG_LOGS_ENABLED) {
@@ -86,6 +99,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         }
         enforcementHandler.removeCallbacksAndMessages(null)
         lastVisibleBlockedWebsiteByPackage.clear()
+        dismissPromptState()
         super.onDestroy()
     }
 
@@ -246,26 +260,57 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
     private fun openInstagramPrompt() {
         promptActive = true
-        startActivity(
-            Intent(this, ConfirmBlockerActivity::class.java).apply {
-                putExtra(ConfirmBlockerActivity.EXTRA_TARGET, ConfirmBlockerActivity.TARGET_INSTAGRAM)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
-            },
-        )
+        showPromptActivity(TARGET_INSTAGRAM)
     }
 
     private fun openYouTubePrompt() {
         promptActive = true
-        startActivity(
-            Intent(this, ConfirmBlockerActivity::class.java).apply {
-                putExtra(ConfirmBlockerActivity.EXTRA_TARGET, ConfirmBlockerActivity.TARGET_YOUTUBE)
+        showPromptActivity(TARGET_YOUTUBE)
+    }
+
+    private fun showPromptActivity(target: String) {
+        enforcementHandler.post {
+            dismissPromptState()
+            promptTarget = target
+            val intent = Intent(this, ConfirmBlockerActivity::class.java).apply {
+                putExtra(ConfirmBlockerActivity.EXTRA_TARGET, target)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
-            },
-        )
+            }
+            runCatching {
+                startActivity(intent)
+                Log.d(PROMPT_DEBUG_TAG, "Showing blocker activity for target=$target")
+            }.onFailure {
+                Log.e(PROMPT_DEBUG_TAG, "Failed to show blocker activity", it)
+                dismissPromptState()
+            }
+        }
+    }
+
+    private fun dismissPromptState() {
+        promptTarget = null
+        promptActive = false
+    }
+
+    private fun dismissPromptOverlay() {
+        enforcementHandler.post {
+            dismissPromptState()
+        }
+    }
+
+    private fun doesPackageMatchPromptTarget(packageName: String, target: String): Boolean {
+        return when (target) {
+            TARGET_YOUTUBE -> isYouTubePackage(packageName)
+            else -> packageName == INSTAGRAM_PACKAGE_NAME
+        }
+    }
+
+    private fun shouldDismissPromptForPackage(packageName: String, target: String): Boolean {
+        if (packageName == this.packageName) return false
+        if (packageName == "android") return false
+        if (packageName == "com.android.systemui") return false
+        return !doesPackageMatchPromptTarget(packageName, target)
     }
 
     private fun shouldOpenInstagramBlockPrompt(
@@ -273,12 +318,10 @@ class AppGuardAccessibilityService : AccessibilityService() {
         eventType: Int,
     ): Boolean {
         if (isInstagramReelsBlockingEnabled()) {
-            if (eventType == AccessibilityEvent.TYPE_VIEW_CLICKED && isReelsClick(event)) {
-                return true
-            }
             if (
-                eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
-                isReelsContentScreen()
+                (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+                    eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) &&
+                isInstagramReelsScreen()
             ) {
                 return true
             }
@@ -307,22 +350,36 @@ class AppGuardAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun isReelsClick(event: AccessibilityEvent): Boolean {
-        val clickedLabel = buildString {
-            event.text.forEach { append(' ').append(it) }
-            append(' ').append(event.contentDescription?.toString().orEmpty())
-        }.trim()
+    private fun isInstagramReelsScreen(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now < instagramReelsDetectedUntilMillis) {
+            return true
+        }
+        if (now - lastInstagramReelsScanAtMillis < INSTAGRAM_REELS_SCAN_DEBOUNCE_MILLIS) {
+            return false
+        }
+        lastInstagramReelsScanAtMillis = now
 
-        return clickedLabel.equals("reels", ignoreCase = true) ||
-            clickedLabel.startsWith("Reel by ", ignoreCase = true)
+        val rootNode = rootInActiveWindow ?: return false
+        val reelsNodes = rootNode.findAccessibilityNodeInfosByViewId(INSTAGRAM_REELS_CONTAINER_VIEW_ID)
+            ?: return false
+
+        val isDetected = reelsNodes.any { node ->
+            node?.isVisibleToUser == true &&
+                !node.isContentInvalid &&
+                node.viewIdResourceName == INSTAGRAM_REELS_CONTAINER_VIEW_ID
+        }
+
+        if (isDetected) {
+            instagramReelsDetectedUntilMillis = now + INSTAGRAM_REELS_DETECTION_CACHE_MILLIS
+        }
+
+        return isDetected
     }
 
-    private fun isReelsContentScreen(): Boolean {
-        val rootNode = rootInActiveWindow ?: return false
-        val rootText = buildNodeText(rootNode)
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        return rootText.startsWith("Reel by ", ignoreCase = true)
+    private fun clearInstagramReelsDetectionCache() {
+        lastInstagramReelsScanAtMillis = 0L
+        instagramReelsDetectedUntilMillis = 0L
     }
 
     private fun isStoriesContentScreen(): Boolean {
@@ -480,13 +537,20 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val INSTAGRAM_REELS_SETTING_KEY = "instagram_reels"
         const val INSTAGRAM_STORIES_SETTING_KEY = "instagram_explore"
         const val YOUTUBE_SHORTS_SETTING_KEY = "youtube_shorts"
+        const val TARGET_INSTAGRAM = "instagram"
+        const val TARGET_YOUTUBE = "youtube"
+        private const val INSTAGRAM_REELS_CONTAINER_VIEW_ID =
+            "com.instagram.android:id/clips_video_container"
         private const val INSTAGRAM_DEBUG_TAG = "TempusInstagramDebug"
         private const val YOUTUBE_DEBUG_TAG = "TempusYouTubeDebug"
+        private const val PROMPT_DEBUG_TAG = "TempusPromptOverlay"
         private const val BLOCK_RETRY_COUNT = 6
         private const val BLOCK_RETRY_DELAY_MS = 250L
         private const val PROMPT_SUPPRESSION_MILLIS = 800L
-        private const val INSTAGRAM_DEBUG_LOGS_ENABLED = true
+        private const val INSTAGRAM_DEBUG_LOGS_ENABLED = false
         private const val YOUTUBE_DEBUG_LOGS_ENABLED = true
+        private const val INSTAGRAM_REELS_SCAN_DEBOUNCE_MILLIS = 250L
+        private const val INSTAGRAM_REELS_DETECTION_CACHE_MILLIS = 1200L
         private val supportedBrowserPackages = setOf(
             "com.android.chrome",
             "com.chrome.beta",
@@ -538,7 +602,9 @@ class AppGuardAccessibilityService : AccessibilityService() {
         private var promptSuppressedUntilMillis = 0L
 
         fun dismissPrompt() {
-            promptActive = false
+            activeService?.dismissPromptOverlay() ?: run {
+                promptActive = false
+            }
         }
 
         fun returnToPreviousPageAfterPrompt() {
@@ -554,14 +620,16 @@ class AppGuardAccessibilityService : AccessibilityService() {
         fun allowTargetForMinutes(target: String, minutes: Int) {
             val allowedUntil = System.currentTimeMillis() + minutes * 60 * 1000L
             when (target.lowercase()) {
-                ConfirmBlockerActivity.TARGET_YOUTUBE -> {
+                TARGET_YOUTUBE -> {
                     youTubeAllowedUntilMillis = allowedUntil
                 }
                 else -> {
                     instagramAllowedUntilMillis = allowedUntil
                 }
             }
-            promptActive = false
+            activeService?.dismissPromptOverlay() ?: run {
+                promptActive = false
+            }
         }
     }
 

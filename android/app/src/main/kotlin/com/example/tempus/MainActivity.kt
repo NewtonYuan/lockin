@@ -47,6 +47,7 @@ open class MainActivity : FlutterActivity() {
         "facebook_reels",
         "facebook_watch",
     )
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
