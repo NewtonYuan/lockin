@@ -35,6 +35,14 @@
             android:launchMode="singleTask"
             android:noHistory="true"
             android:theme="@style/PromptTheme" />
+        <activity
+            android:name=".PauseOnOpenActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:finishOnTaskLaunch="true"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:theme="@style/PromptTheme" />
         <service
             android:name=".AppGuardAccessibilityService"
             android:exported="false"
@@ -62,9 +70,6 @@
         <package android:name="com.instagram.android" />
         <package android:name="com.google.android.youtube" />
         <package android:name="app.revanced.android.youtube" />
-        <package android:name="com.zhiliaoapp.musically" />
-        <package android:name="com.snapchat.android" />
-        <package android:name="com.facebook.katana" />
         <intent>
             <action android:name="android.intent.action.MAIN"/>
             <category android:name="android.intent.category.LAUNCHER"/>

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import 'accessibility_enabled_screen.dart';
 import 'brand.dart';
 import 'tabs/block_tab.dart';
 import 'tabs/home_tab.dart';
@@ -23,21 +24,6 @@ const _trackedUsageApps = [
     packageNames: ['com.google.android.youtube'],
     packagePrefixes: ['app.revanced.android.youtube'],
     color: Color(0xFFFF0000),
-  ),
-  _TrackedUsageApp(
-    appName: 'TikTok',
-    packageNames: ['com.zhiliaoapp.musically'],
-    color: Color(0xFF111111),
-  ),
-  _TrackedUsageApp(
-    appName: 'Snapchat',
-    packageNames: ['com.snapchat.android'],
-    color: Color(0xFFF7D64A),
-  ),
-  _TrackedUsageApp(
-    appName: 'Facebook',
-    packageNames: ['com.facebook.katana'],
-    color: Color(0xFF1877F2),
   ),
 ];
 
@@ -106,6 +92,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool? _isAccessibilityEnabled;
   bool? _isUsageAccessEnabled;
   bool _bypassAccessibilityGate = false;
+  bool _showAccessibilityEnabledScreen = false;
   DateTime _trackerMonth = DateTime(DateTime.now().year, DateTime.now().month);
   DateTime _appInstalledOn = DateTime.now();
   List<AppUsageSegment> _usageSegments = const [];
@@ -114,26 +101,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   List<CustomTrackedApp> _customTrackedApps = const [];
   final List<BlockedWebsiteEntry> _blockedWebsites = [];
   String _blockCategory = 'Apps';
-  bool _isEditingCustomApps = false;
   final Set<String> _expandedApps = {};
   final Map<String, int?> _dailyTimeLimits = {
     'instagram_app': null,
     'youtube_app': null,
-    'tiktok_app': null,
-    'snapchat_app': null,
-    'facebook_app': null,
   };
   final Map<String, bool> _blockSettings = {
+    'instagram_pause_on_open': false,
     'instagram_reels': false,
+    'instagram_reels_dms': false,
     'instagram_explore': false,
+    'youtube_pause_on_open': false,
     'youtube_shorts': false,
     'youtube_home_feed': false,
-    'tiktok_for_you': false,
-    'tiktok_live': false,
-    'snapchat_spotlight': false,
-    'snapchat_discover': false,
-    'facebook_reels': false,
-    'facebook_watch': false,
   };
 
   @override
@@ -168,6 +148,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _refreshAccessibilityStatus() async {
     try {
+      final previousValue = _isAccessibilityEnabled;
       final enabled = await _accessibilityChannel.invokeMethod<bool>(
         'isAccessibilityServiceEnabled',
       );
@@ -176,8 +157,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _isAccessibilityEnabled = enabled ?? false;
         if (_isAccessibilityEnabled == true) {
           _bypassAccessibilityGate = false;
+          if (previousValue == false) {
+            _showAccessibilityEnabledScreen = true;
+          }
         }
       });
+      await _consumeAccessibilityEnabledSuccess();
     } on PlatformException {
       if (!mounted) return;
       setState(() {
@@ -188,6 +173,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       setState(() {
         _isAccessibilityEnabled = false;
       });
+    }
+  }
+
+  Future<void> _consumeAccessibilityEnabledSuccess() async {
+    try {
+      final shouldShow = await _accessibilityChannel.invokeMethod<bool>(
+        'consumeAccessibilityEnabledSuccess',
+      );
+      if (!mounted || shouldShow != true) return;
+      setState(() {
+        _showAccessibilityEnabledScreen = true;
+      });
+    } on PlatformException {
+      // Android-only setup flow. Other platforms ignore this.
+    } on MissingPluginException {
+      // Android-only setup flow. Other platforms ignore this.
     }
   }
 
@@ -280,6 +281,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           savedConfig['customTrackedApps'] as List<dynamic>?;
 
       setState(() {
+        if (rawCustomTrackedApps != null) {
+          _customTrackedApps = rawCustomTrackedApps
+              .whereType<Map>()
+              .map(CustomTrackedApp.fromMap)
+              .where((entry) => entry.appName.isNotEmpty && entry.packageName.isNotEmpty)
+              .toList();
+
+          for (final app in _customTrackedApps) {
+            _dailyTimeLimits.putIfAbsent(app.settingKey, () => null);
+            _blockSettings.putIfAbsent(
+              customTrackedAppPauseOnOpenSettingKey(app.packageName),
+              () => false,
+            );
+          }
+        }
+
         if (rawDailyTimeLimits != null) {
           for (final entry in rawDailyTimeLimits.entries) {
             final key = entry.key;
@@ -334,18 +351,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 );
               }).where((entry) => entry.domain.isNotEmpty),
             );
-        }
-
-        if (rawCustomTrackedApps != null) {
-          _customTrackedApps = rawCustomTrackedApps
-              .whereType<Map>()
-              .map(CustomTrackedApp.fromMap)
-              .where((entry) => entry.appName.isNotEmpty && entry.packageName.isNotEmpty)
-              .toList();
-
-          for (final app in _customTrackedApps) {
-            _dailyTimeLimits.putIfAbsent(app.settingKey, () => null);
-          }
         }
       });
       _refreshUsageStats();
@@ -781,14 +786,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         expandedApps: _expandedApps,
         installedPackageNames: _installedTrackedPackages,
         customTrackedApps: _customTrackedApps,
-        isEditingCustomApps: _isEditingCustomApps,
         blockedWebsites: _blockedWebsites,
         dailyTimeLimits: _dailyTimeLimits,
         blockSettings: _blockSettings,
         onAddWebsite: _addBlockedWebsite,
         onDeleteWebsite: _deleteBlockedWebsite,
         onRequestInstalledApps: _requestInstalledApps,
-        onAddCustomTrackedApp: (app) {
+        onAddCustomTrackedApp: (selection) {
+          final app = selection.app;
           final alreadyExists = _customTrackedApps.any(
             (entry) => entry.packageName == app.packageName,
           );
@@ -798,9 +803,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ..._customTrackedApps,
               app,
             ];
-            _dailyTimeLimits.putIfAbsent(app.settingKey, () => null);
+            _dailyTimeLimits[app.settingKey] = selection.minutes;
+            final pauseOnOpenKey = customTrackedAppPauseOnOpenSettingKey(
+              app.packageName,
+            );
+            _blockSettings[pauseOnOpenKey] = selection.pauseOnOpen;
           });
           _persistCustomTrackedApps();
+          _setNativeDailyTimeLimit(app.settingKey, selection.minutes);
+          _setNativeBlockSetting(
+            customTrackedAppPauseOnOpenSettingKey(app.packageName),
+            selection.pauseOnOpen,
+          );
           _refreshUsageStats();
         },
         onDeleteCustomTrackedApp: (app) {
@@ -809,34 +823,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 .where((entry) => entry.packageName != app.packageName)
                 .toList();
             _dailyTimeLimits.remove(app.settingKey);
+            _blockSettings.remove(
+              customTrackedAppPauseOnOpenSettingKey(app.packageName),
+            );
           });
           _persistCustomTrackedApps();
           _setNativeDailyTimeLimit(app.settingKey, null);
+          _setNativeBlockSetting(
+            customTrackedAppPauseOnOpenSettingKey(app.packageName),
+            false,
+          );
           _refreshUsageStats();
-        },
-        onToggleEditMode: () {
-          setState(() {
-            _isEditingCustomApps = !_isEditingCustomApps;
-          });
-        },
-        onReorderCustomTrackedApps: (oldIndex, newIndex) {
-          setState(() {
-            if (newIndex > oldIndex) {
-              newIndex -= 1;
-            }
-            final reorderedApps = [..._customTrackedApps];
-            final movedApp = reorderedApps.removeAt(oldIndex);
-            reorderedApps.insert(newIndex, movedApp);
-            _customTrackedApps = reorderedApps;
-          });
-          _persistCustomTrackedApps();
         },
         onSelectCategory: (category) {
           setState(() {
             _blockCategory = category;
-            if (category != 'Apps') {
-              _isEditingCustomApps = false;
-            }
           });
         },
         onToggleExpanded: (appName) {
@@ -844,6 +845,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             if (_expandedApps.contains(appName)) {
               _expandedApps.remove(appName);
             } else {
+              const builtInApps = {'Instagram', 'YouTube'};
+              final customAppKeys = _customTrackedApps
+                  .map((app) => app.packageName)
+                  .toSet();
+
+              if (builtInApps.contains(appName)) {
+                _expandedApps.removeAll(builtInApps);
+              } else if (customAppKeys.contains(appName)) {
+                _expandedApps.removeAll(customAppKeys);
+              }
+
               _expandedApps.add(appName);
             }
           });
@@ -939,6 +951,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             ),
           ),
         ),
+      );
+    }
+
+    if (_showAccessibilityEnabledScreen) {
+      return AccessibilityEnabledScreen(
+        onNext: () {
+          setState(() {
+            _showAccessibilityEnabledScreen = false;
+          });
+        },
       );
     }
 

@@ -1,4 +1,4 @@
-package com.example.tempus
+package com.prestige.tempus
 
 import android.app.AppOpsManager
 import android.app.usage.UsageEvents
@@ -10,14 +10,17 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.os.Bundle
 import android.provider.Settings
 import android.os.Process
 import android.util.Base64
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.util.Calendar
+import java.util.concurrent.Executors
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -28,25 +31,25 @@ open class MainActivity : FlutterActivity() {
 
     private val scrollDayStatusesPrefKey = "scroll_day_statuses"
     private val customTrackedAppsPrefKey = "custom_tracked_apps"
+    private val appLoadingExecutor = Executors.newSingleThreadExecutor()
     private val builtInTrackedDailyTimeLimitKeys = listOf(
         "instagram_app",
         "youtube_app",
-        "tiktok_app",
-        "snapchat_app",
-        "facebook_app",
     )
     private val trackedBlockSettingKeys = listOf(
+        "instagram_pause_on_open",
         "instagram_reels",
+        "instagram_reels_dms",
         "instagram_explore",
+        "youtube_pause_on_open",
         "youtube_shorts",
         "youtube_home_feed",
-        "tiktok_for_you",
-        "tiktok_live",
-        "snapchat_spotlight",
-        "snapchat_discover",
-        "facebook_reels",
-        "facebook_watch",
     )
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
+        super.onCreate(savedInstanceState)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -57,6 +60,7 @@ open class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "openAccessibilitySettings" -> {
+                    markAwaitingAccessibilityEnable()
                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                     result.success(null)
                 }
@@ -66,6 +70,9 @@ open class MainActivity : FlutterActivity() {
                 }
                 "isAccessibilityServiceEnabled" -> {
                     result.success(isAccessibilityServiceEnabled())
+                }
+                "consumeAccessibilityEnabledSuccess" -> {
+                    result.success(consumeAccessibilityEnabledSuccess())
                 }
                 "isUsageAccessEnabled" -> {
                     result.success(isUsageAccessEnabled())
@@ -128,7 +135,23 @@ open class MainActivity : FlutterActivity() {
                     result.success(getInstalledTrackedPackages())
                 }
                 "getInstalledApps" -> {
-                    result.success(getInstalledApps())
+                    appLoadingExecutor.execute {
+                        runCatching {
+                            getInstalledApps()
+                        }.onSuccess { installedApps ->
+                            runOnUiThread {
+                                result.success(installedApps)
+                            }
+                        }.onFailure { error ->
+                            runOnUiThread {
+                                result.error(
+                                    "installed_apps_failed",
+                                    error.message ?: "Failed to load installed apps",
+                                    null,
+                                )
+                            }
+                        }
+                    }
                 }
                 "setCustomTrackedApps" -> {
                     val customTrackedApps =
@@ -168,6 +191,27 @@ open class MainActivity : FlutterActivity() {
         return enabledServices.split(':').any { service ->
             service.equals(expectedService, ignoreCase = true)
         }
+    }
+
+    private fun markAwaitingAccessibilityEnable() {
+        getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(AppGuardAccessibilityService.AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY, true)
+            .apply()
+    }
+
+    private fun consumeAccessibilityEnabledSuccess(): Boolean {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        val shouldShow = prefs.getBoolean(
+            AppGuardAccessibilityService.ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY,
+            false,
+        )
+        if (shouldShow) {
+            prefs.edit()
+                .putBoolean(AppGuardAccessibilityService.ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY, false)
+                .apply()
+        }
+        return shouldShow
     }
 
     private fun isUsageAccessEnabled(): Boolean {
@@ -348,7 +392,7 @@ open class MainActivity : FlutterActivity() {
         val dailyTimeLimits = getTrackedDailyTimeLimitKeys().associateWith { key ->
             if (prefs.contains(key)) prefs.getInt(key, 0) else null
         }
-        val blockSettings = trackedBlockSettingKeys.associateWith { key ->
+        val blockSettings = getTrackedBlockSettingKeys().associateWith { key ->
             prefs.getBoolean(key, false)
         }
         val scrollDayStatuses = getScrollDayStatuses()
@@ -485,6 +529,19 @@ open class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun getTrackedBlockSettingKeys(): List<String> {
+        return buildList {
+            addAll(trackedBlockSettingKeys)
+            addAll(
+                getCustomTrackedApps().mapNotNull { app ->
+                    (app["packageName"] as? String)
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let(::customTrackedAppPauseOnOpenSettingKey)
+                },
+            )
+        }
+    }
+
     private fun getTrackedAppLimits(): List<AppLimit> {
         return buildList {
             addAll(builtInTrackedAppLimits)
@@ -506,6 +563,10 @@ open class MainActivity : FlutterActivity() {
         return "custom_app_" + packageName.replace(Regex("[^A-Za-z0-9]+"), "_")
     }
 
+    private fun customTrackedAppPauseOnOpenSettingKey(packageName: String): String {
+        return "custom_app_pause_on_open_" + packageName.replace(Regex("[^A-Za-z0-9]+"), "_")
+    }
+
     private fun encodeDrawableToPngBytes(drawable: Drawable): ByteArray {
         val bitmap = when (drawable) {
             is BitmapDrawable -> drawable.bitmap
@@ -523,6 +584,11 @@ open class MainActivity : FlutterActivity() {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
             outputStream.toByteArray()
         }
+    }
+
+    override fun onDestroy() {
+        appLoadingExecutor.shutdownNow()
+        super.onDestroy()
     }
 
     private data class AppLimit(
@@ -545,18 +611,6 @@ open class MainActivity : FlutterActivity() {
             settingKey = "youtube_app",
             packageNames = setOf("com.google.android.youtube"),
             packagePrefixes = setOf("app.revanced.android.youtube"),
-        ),
-        AppLimit(
-            settingKey = "tiktok_app",
-            packageNames = setOf("com.zhiliaoapp.musically"),
-        ),
-        AppLimit(
-            settingKey = "snapchat_app",
-            packageNames = setOf("com.snapchat.android"),
-        ),
-        AppLimit(
-            settingKey = "facebook_app",
-            packageNames = setOf("com.facebook.katana"),
         ),
     )
 }

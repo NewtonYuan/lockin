@@ -76,7 +76,7 @@ class HomeOverview extends StatelessWidget {
                   child: _ScrollMinutesRing(segments: usageSegments),
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _HomeShortcutCardsRow(
@@ -85,7 +85,7 @@ class HomeOverview extends StatelessWidget {
                   dailyTimeLimits: dailyTimeLimits,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _DailyTrackerCard(
@@ -98,7 +98,7 @@ class HomeOverview extends StatelessWidget {
                   onNextMonth: onNextMonth,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _StreakSummaryCard(
@@ -730,7 +730,7 @@ class _HomeShortcutCardsRow extends StatelessWidget {
   final Map<String, bool> blockSettings;
   final Map<String, int?> dailyTimeLimits;
 
-  static const _gap = 12.0;
+  static const _gap = 8.0;
   static const _horizontalPadding = 12.0;
   static const _verticalPadding = 12.0;
   static const _titleIconGap = 4.0;
@@ -1218,9 +1218,6 @@ class _RestrictedAppsTrail extends StatelessWidget {
   static const _icons = [
     'assets/apps/instagram.svg',
     'assets/apps/youtube.svg',
-    'assets/apps/tiktok.svg',
-    'assets/apps/snapchat.svg',
-    'assets/apps/facebook.jpg',
   ];
 
   @override
@@ -1273,18 +1270,6 @@ class _ResponsiveRestrictedAppsTrail extends StatelessWidget {
     _RestrictedAppIconData(
       settingKey: 'youtube_app',
       assetPath: 'assets/apps/youtube.svg',
-    ),
-    _RestrictedAppIconData(
-      settingKey: 'tiktok_app',
-      assetPath: 'assets/apps/tiktok.svg',
-    ),
-    _RestrictedAppIconData(
-      settingKey: 'snapchat_app',
-      assetPath: 'assets/apps/snapchat.svg',
-    ),
-    _RestrictedAppIconData(
-      settingKey: 'facebook_app',
-      assetPath: 'assets/apps/facebook.jpg',
     ),
   ];
 

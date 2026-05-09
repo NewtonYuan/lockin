@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="LaunchTheme" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#00688f</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/launch_logo</item>
+        <item name="postSplashScreenTheme">@style/NormalTheme</item>
+    </style>
+
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+
+    <style name="PromptTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:colorBackgroundCacheHint">@null</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowAnimationStyle">@style/PromptWindowAnimation</item>
+    </style>
+
+    <style name="PromptWindowAnimation">
+        <item name="android:activityOpenEnterAnimation">@anim/prompt_fade_in</item>
+        <item name="android:activityOpenExitAnimation">@anim/prompt_fade_out</item>
+        <item name="android:activityCloseEnterAnimation">@anim/prompt_fade_in</item>
+        <item name="android:activityCloseExitAnimation">@anim/prompt_fade_out</item>
+    </style>
+</resources>

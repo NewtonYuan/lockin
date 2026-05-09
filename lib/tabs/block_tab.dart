@@ -45,9 +45,26 @@ class CustomTrackedApp {
   };
 }
 
+class InstalledAppSelection {
+  const InstalledAppSelection({
+    required this.app,
+    required this.minutes,
+    required this.pauseOnOpen,
+  });
+
+  final CustomTrackedApp app;
+  final int? minutes;
+  final bool pauseOnOpen;
+}
+
 String customTrackedAppSettingKey(String packageName) {
   final normalized = packageName.replaceAll(RegExp(r'[^a-zA-Z0-9]+'), '_');
   return 'custom_app_$normalized';
+}
+
+String customTrackedAppPauseOnOpenSettingKey(String packageName) {
+  final normalized = packageName.replaceAll(RegExp(r'[^a-zA-Z0-9]+'), '_');
+  return 'custom_app_pause_on_open_$normalized';
 }
 
 class BlockScreen extends StatelessWidget {
@@ -58,7 +75,6 @@ class BlockScreen extends StatelessWidget {
     required this.expandedApps,
     required this.installedPackageNames,
     required this.customTrackedApps,
-    required this.isEditingCustomApps,
     required this.blockedWebsites,
     required this.dailyTimeLimits,
     required this.blockSettings,
@@ -67,8 +83,6 @@ class BlockScreen extends StatelessWidget {
     required this.onRequestInstalledApps,
     required this.onAddCustomTrackedApp,
     required this.onDeleteCustomTrackedApp,
-    required this.onToggleEditMode,
-    required this.onReorderCustomTrackedApps,
     required this.onSelectCategory,
     required this.onToggleExpanded,
     required this.onToggleSetting,
@@ -80,17 +94,14 @@ class BlockScreen extends StatelessWidget {
   final Set<String> expandedApps;
   final Set<String>? installedPackageNames;
   final List<CustomTrackedApp> customTrackedApps;
-  final bool isEditingCustomApps;
   final List<BlockedWebsiteEntry> blockedWebsites;
   final Map<String, int?> dailyTimeLimits;
   final Map<String, bool> blockSettings;
   final ValueChanged<String> onAddWebsite;
   final ValueChanged<BlockedWebsiteEntry> onDeleteWebsite;
   final Future<List<CustomTrackedApp>> Function() onRequestInstalledApps;
-  final ValueChanged<CustomTrackedApp> onAddCustomTrackedApp;
+  final ValueChanged<InstalledAppSelection> onAddCustomTrackedApp;
   final ValueChanged<CustomTrackedApp> onDeleteCustomTrackedApp;
-  final VoidCallback onToggleEditMode;
-  final void Function(int oldIndex, int newIndex) onReorderCustomTrackedApps;
   final ValueChanged<String> onSelectCategory;
   final ValueChanged<String> onToggleExpanded;
   final void Function(String settingKey, bool value) onToggleSetting;
@@ -108,35 +119,6 @@ class BlockScreen extends StatelessWidget {
               title: 'Block',
               onBack: onBackToHome,
               centerTitle: false,
-              trailing: selectedCategory == 'Apps'
-                  ? (isEditingCustomApps
-                      ? TextButton(
-                          onPressed: onToggleEditMode,
-                          child: const Text('Done'),
-                        )
-                      : IconButton(
-                          onPressed: customTrackedApps.isEmpty
-                              ? null
-                              : onToggleEditMode,
-                          icon: SvgPicture.asset(
-                            'assets/icons/edit.svg',
-                            width: 24,
-                            height: 24,
-                            colorFilter: ColorFilter.mode(
-                              customTrackedApps.isEmpty
-                                  ? appMutedText.withValues(alpha: 0.4)
-                                  : appText,
-                              BlendMode.srcIn,
-                            ),
-                          ),
-                          splashRadius: 20,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(
-                            minWidth: 40,
-                            minHeight: 40,
-                          ),
-                        ))
-                  : null,
             ),
           ),
         ),
@@ -160,7 +142,7 @@ class BlockScreen extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               if (selectedCategory == 'Websites')
                 _WebsiteBlockPanel(
                   blockedWebsites: blockedWebsites,
@@ -177,6 +159,8 @@ class BlockScreen extends StatelessWidget {
 
   List<Widget> _buildAppCategoryChildren(BuildContext context) {
     final children = <Widget>[
+      const _AppSectionHeader(label: 'Built-In'),
+      const SizedBox(height: 8),
       _AppBlockCard(
         appName: 'Instagram',
         iconAssetPath: 'assets/apps/instagram.svg',
@@ -193,9 +177,24 @@ class BlockScreen extends StatelessWidget {
             iconSize: 24,
           ),
           _BlockItemData.toggle(
+            keyName: 'instagram_pause_on_open',
+            label: 'Pause on Open',
+            value: blockSettings['instagram_pause_on_open'] ?? false,
+            iconAssetPath: 'assets/icons/pause_on_open.svg',
+            iconSize: 24,
+          ),
+          _BlockItemData.toggle(
             keyName: 'instagram_reels',
             label: 'Block Reels',
             value: blockSettings['instagram_reels'] ?? false,
+          ),
+          _BlockItemData.toggle(
+            keyName: 'instagram_reels_dms',
+            label: 'Allow Reels in DMs',
+            value: blockSettings['instagram_reels_dms'] ?? false,
+            iconAssetPath: 'assets/icons/instagram_reels_dm.svg',
+            iconSize: 24,
+            isSubItem: true,
           ),
           _BlockItemData.toggle(
             keyName: 'instagram_explore',
@@ -207,7 +206,7 @@ class BlockScreen extends StatelessWidget {
         onToggleSetting: onToggleSetting,
         onSelectTimeLimit: onSelectTimeLimit,
       ),
-      const SizedBox(height: 14),
+      const SizedBox(height: 8),
       _AppBlockCard(
         appName: 'YouTube',
         iconAssetPath: 'assets/apps/youtube.svg',
@@ -225,6 +224,13 @@ class BlockScreen extends StatelessWidget {
             iconSize: 24,
           ),
           _BlockItemData.toggle(
+            keyName: 'youtube_pause_on_open',
+            label: 'Pause on Open',
+            value: blockSettings['youtube_pause_on_open'] ?? false,
+            iconAssetPath: 'assets/icons/pause_on_open.svg',
+            iconSize: 24,
+          ),
+          _BlockItemData.toggle(
             keyName: 'youtube_shorts',
             label: 'Block Shorts',
             value: blockSettings['youtube_shorts'] ?? false,
@@ -234,138 +240,37 @@ class BlockScreen extends StatelessWidget {
         onToggleSetting: onToggleSetting,
         onSelectTimeLimit: onSelectTimeLimit,
       ),
-      const SizedBox(height: 14),
-      _AppBlockCard(
-        appName: 'TikTok',
-        iconAssetPath: 'assets/apps/tiktok.svg',
-        isInstalled: _isPackageInstalled(
-          'com.zhiliaoapp.musically',
-        ),
-        isExpanded: expandedApps.contains('TikTok'),
-        items: [
-          _BlockItemData.timeLimit(
-            keyName: 'tiktok_app',
-            label: 'Daily Time Limit',
-            minutes: dailyTimeLimits['tiktok_app'],
-            iconAssetPath: 'assets/icons/timer.svg',
-            iconSize: 24,
-          ),
-        ],
-        onToggleExpanded: () => onToggleExpanded('TikTok'),
-        onToggleSetting: onToggleSetting,
-        onSelectTimeLimit: onSelectTimeLimit,
-      ),
-      const SizedBox(height: 14),
-      _AppBlockCard(
-        appName: 'Snapchat',
-        iconAssetPath: 'assets/apps/snapchat.svg',
-        isInstalled: _isPackageInstalled(
-          'com.snapchat.android',
-        ),
-        isExpanded: expandedApps.contains('Snapchat'),
-        items: [
-          _BlockItemData.timeLimit(
-            keyName: 'snapchat_app',
-            label: 'Daily Time Limit',
-            minutes: dailyTimeLimits['snapchat_app'],
-            iconAssetPath: 'assets/icons/timer.svg',
-            iconSize: 24,
-          ),
-        ],
-        onToggleExpanded: () => onToggleExpanded('Snapchat'),
-        onToggleSetting: onToggleSetting,
-        onSelectTimeLimit: onSelectTimeLimit,
-      ),
-      const SizedBox(height: 14),
-      _AppBlockCard(
-        appName: 'Facebook',
-        iconAssetPath: 'assets/apps/facebook.jpg',
-        isInstalled: _isPackageInstalled(
-          'com.facebook.katana',
-        ),
-        isExpanded: expandedApps.contains('Facebook'),
-        items: [
-          _BlockItemData.timeLimit(
-            keyName: 'facebook_app',
-            label: 'Daily Time Limit',
-            minutes: dailyTimeLimits['facebook_app'],
-            iconAssetPath: 'assets/icons/timer.svg',
-            iconSize: 24,
-          ),
-        ],
-        onToggleExpanded: () => onToggleExpanded('Facebook'),
-        onToggleSetting: onToggleSetting,
-        onSelectTimeLimit: onSelectTimeLimit,
-      ),
     ];
 
-    if (customTrackedApps.isNotEmpty && isEditingCustomApps) {
-      children.add(const SizedBox(height: 14));
-      children.add(
-        ReorderableListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          buildDefaultDragHandles: false,
-          itemCount: customTrackedApps.length,
-          onReorder: onReorderCustomTrackedApps,
-          itemBuilder: (context, index) {
-            final app = customTrackedApps[index];
-            return Padding(
-              key: ValueKey('custom-app-${app.packageName}'),
-              padding: EdgeInsets.only(
-                bottom: index == customTrackedApps.length - 1 ? 0 : 14,
-              ),
-              child: _CustomTrackedAppCard(
-                app: app,
-                minutes: dailyTimeLimits[app.settingKey],
-                isEditing: true,
-                onTap: () {},
-                onDelete: () => onDeleteCustomTrackedApp(app),
-                trailing: ReorderableDragStartListener(
-                  index: index,
-                  child: const Padding(
-                    padding: EdgeInsets.only(left: 6),
-                    child: Icon(
-                      Icons.drag_handle_rounded,
-                      color: appMutedText,
-                      size: 22,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
-      );
-      return children;
-    }
+    children.add(const SizedBox(height: 14));
+    children.add(const _AppSectionHeader(label: 'Additional'));
 
     for (final app in customTrackedApps) {
-      children.add(const SizedBox(height: 14));
+      children.add(const SizedBox(height: 8));
       children.add(
-        _CustomTrackedAppCard(
+        _AdditionalTrackedAppCard(
           app: app,
           minutes: dailyTimeLimits[app.settingKey],
-          isEditing: false,
-          onTap: () => showDailyTimeLimitPicker(
-            context,
-            initialMinutes: dailyTimeLimits[app.settingKey],
-            onTimeLimitSelected: (minutes) =>
-                onSelectTimeLimit(app.settingKey, minutes),
+          pauseOnOpen: blockSettings[customTrackedAppPauseOnOpenSettingKey(app.packageName)] ?? false,
+          isExpanded: expandedApps.contains(app.packageName),
+          onToggleExpanded: () => onToggleExpanded(app.packageName),
+          onSelectTimeLimit: (minutes) =>
+              onSelectTimeLimit(app.settingKey, minutes),
+          onTogglePauseOnOpen: (value) => onToggleSetting(
+            customTrackedAppPauseOnOpenSettingKey(app.packageName),
+            value,
           ),
-          onDelete: () => onDeleteCustomTrackedApp(app),
+          onRemoveApp: () => onDeleteCustomTrackedApp(app),
         ),
       );
     }
 
-    if (!isEditingCustomApps) {
-      children.add(const SizedBox(height: 14));
-      children.add(
-        _AddAppCard(
-          onTap: () => _promptForInstalledApp(context),
-        ),
-      );
-    }
+    children.add(const SizedBox(height: 8));
+    children.add(
+      _AddAppCard(
+        onTap: () => _promptForInstalledApp(context),
+      ),
+    );
     return children;
   }
 
@@ -373,40 +278,28 @@ class BlockScreen extends StatelessWidget {
     final existingPackages = <String>{
       'com.instagram.android',
       'com.google.android.youtube',
-      'com.zhiliaoapp.musically',
-      'com.snapchat.android',
-      'com.facebook.katana',
       ...customTrackedApps.map((app) => app.packageName),
     };
-    final installedApps = await onRequestInstalledApps();
-    if (!context.mounted) return;
-
-    final availableApps = installedApps.where((app) {
-      if (existingPackages.contains(app.packageName)) {
-        return false;
-      }
-      if (app.packageName.startsWith('app.revanced.android.youtube')) {
-        return false;
-      }
-      return true;
-    }).toList()
-      ..sort((first, second) => first.appName.toLowerCase().compareTo(
-            second.appName.toLowerCase(),
-          ));
-
-    if (availableApps.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No additional installed apps available.')),
-      );
-      return;
-    }
-
-    final selectedApp = await showModalBottomSheet<CustomTrackedApp>(
+    final selectedApp = await showModalBottomSheet<InstalledAppSelection>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _InstalledAppPickerSheet(
-        installedApps: availableApps,
+        loadInstalledApps: () async {
+          final installedApps = await onRequestInstalledApps();
+          return installedApps.where((app) {
+            if (existingPackages.contains(app.packageName)) {
+              return false;
+            }
+            if (app.packageName.startsWith('app.revanced.android.youtube')) {
+              return false;
+            }
+            return true;
+          }).toList()
+            ..sort((first, second) => first.appName.toLowerCase().compareTo(
+                  second.appName.toLowerCase(),
+                ));
+        },
       ),
     );
     if (selectedApp == null) return;
@@ -431,121 +324,97 @@ class BlockScreen extends StatelessWidget {
   }
 }
 
-class _CustomTrackedAppCard extends StatelessWidget {
-  const _CustomTrackedAppCard({
+class _AppSectionHeader extends StatelessWidget {
+  const _AppSectionHeader({
+    required this.label,
+  });
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: appMutedText,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.2,
+              ) ??
+              const TextStyle(
+                color: appMutedText,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+        const SizedBox(width: 10),
+        const Expanded(
+          child: Divider(
+            color: appBorder,
+            height: 1,
+            thickness: 1,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AdditionalTrackedAppCard extends StatelessWidget {
+  const _AdditionalTrackedAppCard({
     required this.app,
     required this.minutes,
-    required this.isEditing,
-    required this.onTap,
-    required this.onDelete,
-    this.trailing,
+    required this.pauseOnOpen,
+    required this.isExpanded,
+    required this.onToggleExpanded,
+    required this.onSelectTimeLimit,
+    required this.onTogglePauseOnOpen,
+    required this.onRemoveApp,
   });
 
   final CustomTrackedApp app;
   final int? minutes;
-  final bool isEditing;
-  final VoidCallback onTap;
-  final VoidCallback onDelete;
-  final Widget? trailing;
+  final bool pauseOnOpen;
+  final bool isExpanded;
+  final VoidCallback onToggleExpanded;
+  final ValueChanged<int?> onSelectTimeLimit;
+  final ValueChanged<bool> onTogglePauseOnOpen;
+  final VoidCallback onRemoveApp;
 
   @override
   Widget build(BuildContext context) {
-    final borderRadius = BorderRadius.circular(8);
-
-    return Material(
-      color: appSurface,
-      borderRadius: borderRadius,
-      child: Ink(
-        decoration: BoxDecoration(borderRadius: borderRadius),
-        child: InkWell(
-          borderRadius: borderRadius,
-          splashColor: brand.withValues(alpha: 0.18),
-          highlightColor: appText.withValues(alpha: 0.04),
-          onTap: isEditing ? null : onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: app.iconBytes != null
-                        ? Image.memory(
-                            app.iconBytes!,
-                            fit: BoxFit.fill,
-                          )
-                        : Center(
-                            child: Text(
-                              app.appName.isEmpty
-                                  ? '?'
-                                  : app.appName.substring(0, 1),
-                              style: const TextStyle(
-                                color: appText,
-                                fontSize: 22,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Text(
-                    app.appName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: appText,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                Text(
-                  _formatMinutes(minutes),
-                  style: const TextStyle(
-                    color: appMutedText,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                if (isEditing) ...[
-                  IconButton(
-                    onPressed: onDelete,
-                    splashRadius: 20,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 24,
-                      minHeight: 24,
-                    ),
-                    icon: SvgPicture.asset(
-                      'assets/icons/delete_forever.svg',
-                      width: 22,
-                      height: 22,
-                      colorFilter: const ColorFilter.mode(
-                        appMutedText,
-                        BlendMode.srcIn,
-                      ),
-                    ),
-                  ),
-                  if (trailing != null) trailing!,
-                ] else
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    color: appMutedText,
-                    size: 20,
-                  ),
-              ],
-            ),
-          ),
+    return _AppBlockCard(
+      appName: app.appName,
+      iconBytes: app.iconBytes,
+      isInstalled: true,
+      isExpanded: isExpanded,
+      items: [
+        _BlockItemData.timeLimit(
+          keyName: app.settingKey,
+          label: 'Daily Time Limit',
+          minutes: minutes,
+          iconAssetPath: 'assets/icons/timer.svg',
+          iconSize: 24,
         ),
-      ),
+        _BlockItemData.toggle(
+          keyName: customTrackedAppPauseOnOpenSettingKey(app.packageName),
+          label: 'Pause on Open',
+          value: pauseOnOpen,
+          iconAssetPath: 'assets/icons/pause_on_open.svg',
+          iconSize: 24,
+        ),
+        const _BlockItemData.action(
+          keyName: '__remove_app__',
+          label: 'Remove App',
+          iconAssetPath: 'assets/icons/delete_forever.svg',
+          iconSize: 24,
+        ),
+      ],
+      onToggleExpanded: onToggleExpanded,
+      onToggleSetting: (settingKey, value) => onTogglePauseOnOpen(value),
+      onSelectTimeLimit: (_, minutes) => onSelectTimeLimit(minutes),
+      onActionPressed: (_) => onRemoveApp(),
     );
   }
 }
@@ -554,6 +423,9 @@ class _AddAppCard extends StatelessWidget {
   const _AddAppCard({
     required this.onTap,
   });
+
+  static const double _rowMinHeight = 52;
+  static const double _iconBoxSize = 28;
 
   final VoidCallback onTap;
 
@@ -571,42 +443,45 @@ class _AddAppCard extends StatelessWidget {
           splashColor: brand.withValues(alpha: 0.18),
           highlightColor: appText.withValues(alpha: 0.04),
           onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: appSurfaceStrong,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.add_rounded,
-                    color: brand,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                const Expanded(
-                  child: Text(
-                    'Add App',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: appText,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: _rowMinHeight),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Row(
+                children: [
+                  Container(
+                    width: _iconBoxSize,
+                    height: _iconBoxSize,
+                    decoration: BoxDecoration(
+                      color: appSurfaceStrong,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      Icons.add_rounded,
+                      color: brand,
+                      size: 20,
                     ),
                   ),
-                ),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: appMutedText,
-                  size: 20,
-                ),
-              ],
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Text(
+                      'Add App',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: appText,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: appMutedText,
+                    size: 20,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -617,26 +492,44 @@ class _AddAppCard extends StatelessWidget {
 
 class _InstalledAppPickerSheet extends StatefulWidget {
   const _InstalledAppPickerSheet({
-    required this.installedApps,
+    required this.loadInstalledApps,
   });
 
-  final List<CustomTrackedApp> installedApps;
+  final Future<List<CustomTrackedApp>> Function() loadInstalledApps;
 
   @override
   State<_InstalledAppPickerSheet> createState() => _InstalledAppPickerSheetState();
 }
 
 class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
+  static const _loadDelay = Duration(milliseconds: 260);
+  static const _pickerRowMinHeight = 52.0;
+  static const _pickerIconBoxSize = 28.0;
+
   String _query = '';
+  Future<List<CustomTrackedApp>>? _installedAppsFuture;
+  CustomTrackedApp? _selectedApp;
+  int? _selectedMinutes;
+  bool _selectedPauseOnOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(_loadDelay, () {
+        if (!mounted) return;
+        setState(() {
+          _installedAppsFuture = widget.loadInstalledApps();
+        });
+      });
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final filteredApps = widget.installedApps.where((app) {
-      final normalizedQuery = _query.trim().toLowerCase();
-      if (normalizedQuery.isEmpty) return true;
-      return app.appName.toLowerCase().contains(normalizedQuery) ||
-          app.packageName.toLowerCase().contains(normalizedQuery);
-    }).toList();
+    if (_selectedApp != null) {
+      return _buildDetailPage(context, _selectedApp!);
+    }
 
     return SafeArea(
       top: false,
@@ -675,79 +568,338 @@ class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    onChanged: (value) {
-                      setState(() {
-                        _query = value;
-                      });
-                    },
-                    decoration: InputDecoration(
-                      hintText: 'Search apps',
-                      prefixIcon: const Icon(Icons.search_rounded),
-                      filled: true,
-                      fillColor: appSurface,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
+                  Expanded(
+                    child: FutureBuilder<List<CustomTrackedApp>>(
+                      future: _installedAppsFuture,
+                      builder: (context, snapshot) {
+                        if (_installedAppsFuture == null ||
+                            snapshot.connectionState != ConnectionState.done) {
+                          return const _InstalledAppsLoadingState();
+                        }
+                        if (snapshot.hasError) {
+                          return const _InstalledAppsMessageState(
+                            message: 'Could not load installed apps.',
+                          );
+                        }
+
+                        final installedApps = snapshot.data ?? const <CustomTrackedApp>[];
+                        final filteredApps = installedApps.where((app) {
+                          final normalizedQuery = _query.trim().toLowerCase();
+                          if (normalizedQuery.isEmpty) return true;
+                          return app.appName.toLowerCase().contains(normalizedQuery) ||
+                              app.packageName.toLowerCase().contains(normalizedQuery);
+                        }).toList();
+
+                        return Column(
+                          children: [
+                            const SizedBox(height: 12),
+                            TextField(
+                              onChanged: (value) {
+                                setState(() {
+                                  _query = value;
+                                });
+                              },
+                              decoration: InputDecoration(
+                                hintText: 'Search apps',
+                                prefixIcon: const Icon(Icons.search_rounded),
+                                filled: true,
+                                fillColor: appSurface,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Expanded(
+                              child: installedApps.isEmpty
+                                  ? const _InstalledAppsMessageState(
+                                      message: 'No additional installed apps available.',
+                                    )
+                                  : ListView.separated(
+                                      itemCount: filteredApps.length,
+                                      separatorBuilder: (_, _) => const Divider(
+                                        height: 1,
+                                        color: appBorder,
+                                      ),
+                                      itemBuilder: (context, index) {
+                                        final app = filteredApps[index];
+                                        return InkWell(
+                                          onTap: () {
+                                            setState(() {
+                                              _selectedApp = app;
+                                              _selectedMinutes = null;
+                                              _selectedPauseOnOpen = false;
+                                            });
+                                          },
+                                          child: ConstrainedBox(
+                                            constraints: const BoxConstraints(
+                                              minHeight: _pickerRowMinHeight,
+                                            ),
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 4,
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  Container(
+                                                    width: _pickerIconBoxSize,
+                                                    height: _pickerIconBoxSize,
+                                                    decoration: BoxDecoration(
+                                                      color: appSurfaceStrong,
+                                                      borderRadius: BorderRadius.circular(8),
+                                                    ),
+                                                    child: ClipRRect(
+                                                      borderRadius: BorderRadius.circular(8),
+                                                      child: app.iconBytes != null
+                                                          ? Image.memory(
+                                                              app.iconBytes!,
+                                                              fit: BoxFit.fill,
+                                                            )
+                                                          : Center(
+                                                              child: Text(
+                                                                app.appName.isEmpty
+                                                                    ? '?'
+                                                                    : app.appName
+                                                                        .substring(0, 1)
+                                                                        .toUpperCase(),
+                                                                style: const TextStyle(
+                                                                  color: appText,
+                                                                  fontSize: 16,
+                                                                  fontWeight: FontWeight.w700,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 14),
+                                                  Expanded(
+                                                    child: Text(
+                                                      app.appName,
+                                                      style: const TextStyle(
+                                                        color: appText,
+                                                        fontWeight: FontWeight.w600,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  const Icon(
+                                                    Icons.chevron_right_rounded,
+                                                    color: appMutedText,
+                                                    size: 20,
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailPage(BuildContext context, CustomTrackedApp app) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 12,
+          right: 12,
+          bottom: MediaQuery.viewInsetsOf(context).bottom + 12,
+          top: 24,
+        ),
+        child: Material(
+          color: appBackground,
+          borderRadius: BorderRadius.circular(20),
+          child: SizedBox(
+            height: 520,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: appBorder,
+                        borderRadius: BorderRadius.circular(999),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: ListView.separated(
-                      itemCount: filteredApps.length,
-                      separatorBuilder: (_, _) => const Divider(
-                        height: 1,
-                        color: appBorder,
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _selectedApp = null;
+                          });
+                        },
+                        icon: const Icon(
+                          Icons.arrow_back_rounded,
+                          color: appText,
+                        ),
+                        splashRadius: 20,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 32,
+                          minHeight: 32,
+                        ),
                       ),
-                      itemBuilder: (context, index) {
-                        final app = filteredApps[index];
-                        return ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 2,
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          app.appName,
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                color: appText,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Material(
+                    color: appSurface,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () => showDailyTimeLimitPicker(
+                            context,
+                            initialMinutes: _selectedMinutes,
+                            onTimeLimitSelected: (minutes) {
+                              setState(() {
+                                _selectedMinutes = minutes;
+                              });
+                            },
                           ),
-                          leading: Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: appSurfaceStrong,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: app.iconBytes != null
-                                  ? Image.memory(
-                                      app.iconBytes!,
-                                      fit: BoxFit.fill,
-                                    )
-                                  : Center(
-                                      child: Text(
-                                        app.appName.isEmpty
-                                            ? '?'
-                                            : app.appName
-                                                .substring(0, 1)
-                                                .toUpperCase(),
-                                        style: const TextStyle(
-                                          color: appText,
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w700,
-                                        ),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(minHeight: 52),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              child: Row(
+                                children: [
+                                  SvgPicture.asset(
+                                    'assets/icons/timer.svg',
+                                    width: 22,
+                                    height: 22,
+                                    colorFilter: const ColorFilter.mode(
+                                      appMutedText,
+                                      BlendMode.srcIn,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  const Expanded(
+                                    child: Text(
+                                      'Daily Time Limit',
+                                      style: TextStyle(
+                                        color: appText,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w500,
                                       ),
                                     ),
+                                  ),
+                                  Text(
+                                    _formatMinutes(_selectedMinutes),
+                                    style: const TextStyle(
+                                      color: appMutedText,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  const Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: appMutedText,
+                                    size: 20,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                          title: Text(
-                            app.appName,
-                            style: const TextStyle(
-                              color: appText,
-                              fontWeight: FontWeight.w600,
+                        ),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () {
+                            setState(() {
+                              _selectedPauseOnOpen = !_selectedPauseOnOpen;
+                            });
+                          },
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(minHeight: 52),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 14),
+                              child: Row(
+                                children: [
+                                  SvgPicture.asset(
+                                    'assets/icons/pause_on_open.svg',
+                                    width: 22,
+                                    height: 22,
+                                    colorFilter: const ColorFilter.mode(
+                                      appMutedText,
+                                      BlendMode.srcIn,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  const Expanded(
+                                    child: Text(
+                                      'Pause on Open',
+                                      style: TextStyle(
+                                        color: appText,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                  Switch(
+                                    value: _selectedPauseOnOpen,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        _selectedPauseOnOpen = value;
+                                      });
+                                    },
+                                    activeColor: brand,
+                                    inactiveThumbColor: appBackground,
+                                    inactiveTrackColor: appBorder,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                          onTap: () => Navigator.of(context).pop(app),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Spacer(),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () {
+                        Navigator.of(context).pop(
+                          InstalledAppSelection(
+                            app: app,
+                            minutes: _selectedMinutes,
+                            pauseOnOpen: _selectedPauseOnOpen,
+                          ),
                         );
                       },
+                      child: const Text('Save'),
                     ),
                   ),
                 ],
@@ -1104,6 +1256,7 @@ class _AppBlockCard extends StatelessWidget {
     required this.onToggleExpanded,
     required this.onToggleSetting,
     required this.onSelectTimeLimit,
+    this.onActionPressed,
   });
 
   final String appName;
@@ -1115,6 +1268,10 @@ class _AppBlockCard extends StatelessWidget {
   final VoidCallback onToggleExpanded;
   final void Function(String settingKey, bool value) onToggleSetting;
   final void Function(String settingKey, int? minutes) onSelectTimeLimit;
+  final ValueChanged<String>? onActionPressed;
+
+  static const double _headerMinHeight = 52;
+  static const double _appIconSize = 28;
 
   @override
   Widget build(BuildContext context) {
@@ -1157,87 +1314,87 @@ class _AppBlockCard extends StatelessWidget {
               splashColor: brand.withValues(alpha: 0.18),
               highlightColor: appText.withValues(alpha: 0.04),
               onTap: canExpand ? onToggleExpanded : null,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Opacity(
-                          opacity: iconOpacity,
-                          child: SizedBox.expand(
-                            child: iconAssetPath != null || iconBytes != null
-                                ? _BlockAppIcon(
-                                    assetPath: iconAssetPath,
-                                    iconBytes: iconBytes,
-                                  )
-                                : Center(
-                                    child: Text(
-                                      appName.substring(0, 1),
-                                      style: TextStyle(
-                                        color: titleColor,
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.w700,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: _headerMinHeight),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: _appIconSize,
+                        height: _appIconSize,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Opacity(
+                            opacity: iconOpacity,
+                            child: SizedBox.expand(
+                              child: iconAssetPath != null || iconBytes != null
+                                  ? _BlockAppIcon(
+                                      assetPath: iconAssetPath,
+                                      iconBytes: iconBytes,
+                                    )
+                                  : Center(
+                                      child: Text(
+                                        appName.substring(0, 1),
+                                        style: TextStyle(
+                                          color: titleColor,
+                                          fontSize: 22,
+                                          fontWeight: FontWeight.w700,
+                                        ),
                                       ),
                                     ),
-                                  ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              appName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: titleColor,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                appName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: titleColor,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
-                          ),
-                          if (!isInstalled) ...[
-                            const SizedBox(width: 6),
-                            Text(
-                              '(Not Installed)',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(
-                                    color: appMutedText,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                            ),
+                            if (!isInstalled) ...[
+                              const SizedBox(width: 6),
+                              Text(
+                                '(Not Installed)',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      color: appMutedText,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                            ],
                           ],
-                        ],
-                      ),
-                    ),
-                    if (isInstalled)
-                      AnimatedRotation(
-                        turns: isExpanded ? 0.5 : 0,
-                        duration: const Duration(milliseconds: 180),
-                        curve: Curves.easeOut,
-                        child: const Icon(
-                          Icons.keyboard_arrow_down_rounded,
-                          color: appText,
-                          size: 22,
                         ),
                       ),
-                  ],
+                      if (isInstalled)
+                        AnimatedRotation(
+                          turns: isExpanded ? 0.5 : 0,
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeOut,
+                          child: const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            color: appText,
+                            size: 22,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1260,6 +1417,7 @@ class _AppBlockCard extends StatelessWidget {
                                     onToggleSetting(item.keyName, value),
                                 onTimeLimitSelected: (minutes) =>
                                     onSelectTimeLimit(item.keyName, minutes),
+                                onActionPressed: onActionPressed,
                               ),
                             )
                             .toList(),
@@ -1269,6 +1427,66 @@ class _AppBlockCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _InstalledAppsLoadingState extends StatelessWidget {
+  const _InstalledAppsLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          SizedBox(height: 24),
+          CircularProgressIndicator(color: brand),
+          SizedBox(height: 16),
+          Text(
+            'Loading installed apps...',
+            style: TextStyle(
+              color: appMutedText,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          SizedBox(height: 16),
+          SizedBox(
+            width: 180,
+            child: LinearProgressIndicator(
+              color: brand,
+              backgroundColor: appSurfaceStrong,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InstalledAppsMessageState extends StatelessWidget {
+  const _InstalledAppsMessageState({
+    required this.message,
+  });
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: appMutedText,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ),
     );
   }
@@ -1291,6 +1509,9 @@ class _SingleTimeLimitAppButton extends StatelessWidget {
   final int? minutes;
   final VoidCallback? onTap;
 
+  static const double _rowMinHeight = 52;
+  static const double _appIconSize = 28;
+
   @override
   Widget build(BuildContext context) {
     final borderRadius = BorderRadius.circular(8);
@@ -1307,87 +1528,90 @@ class _SingleTimeLimitAppButton extends StatelessWidget {
           splashColor: brand.withValues(alpha: 0.18),
           highlightColor: appText.withValues(alpha: 0.04),
           onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Opacity(
-                      opacity: iconOpacity,
-                      child: SizedBox.expand(
-                        child: iconAssetPath != null || iconBytes != null
-                            ? _BlockAppIcon(
-                                assetPath: iconAssetPath,
-                                iconBytes: iconBytes,
-                              )
-                            : Center(
-                                child: Text(
-                                  appName.substring(0, 1),
-                                  style: TextStyle(
-                                    color: titleColor,
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.w700,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: _rowMinHeight),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Row(
+                children: [
+                  Container(
+                    width: _appIconSize,
+                    height: _appIconSize,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Opacity(
+                        opacity: iconOpacity,
+                        child: SizedBox.expand(
+                          child: iconAssetPath != null || iconBytes != null
+                              ? _BlockAppIcon(
+                                  assetPath: iconAssetPath,
+                                  iconBytes: iconBytes,
+                                )
+                              : Center(
+                                  child: Text(
+                                    appName.substring(0, 1),
+                                    style: TextStyle(
+                                      color: titleColor,
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
                                 ),
-                              ),
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          appName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: titleColor,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            appName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: titleColor,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
-                      ),
-                      if (!isInstalled) ...[
-                        const SizedBox(width: 6),
-                        Text(
-                          '(Not Installed)',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: appMutedText,
-                                fontWeight: FontWeight.w700,
-                              ),
-                        ),
+                        if (!isInstalled) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            '(Not Installed)',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: appMutedText,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
-                ),
-                if (isInstalled) ...[
-                  Text(
-                    _formatMinutes(minutes),
-                    style: const TextStyle(
-                      color: appMutedText,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(width: 4),
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    color: appMutedText,
-                    size: 20,
-                  ),
+                  if (isInstalled) ...[
+                    Text(
+                      _formatMinutes(minutes),
+                      style: const TextStyle(
+                        color: appMutedText,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      color: appMutedText,
+                      size: 20,
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -1432,8 +1656,10 @@ class _BlockItemRow extends StatelessWidget {
     required this.item,
     required this.onToggleChanged,
     required this.onTimeLimitSelected,
+    this.onActionPressed,
   });
   static const double _rowMinHeight = 52;
+  static const double _subItemMinHeight = 42;
   static const List<int> _hourValues = [
     0,
     1,
@@ -1465,20 +1691,66 @@ class _BlockItemRow extends StatelessWidget {
   final _BlockItemData item;
   final ValueChanged<bool> onToggleChanged;
   final ValueChanged<int?> onTimeLimitSelected;
+  final ValueChanged<String>? onActionPressed;
 
   @override
   Widget build(BuildContext context) {
+    final isSubItem = item.isSubItem;
+    final rowMinHeight = isSubItem ? _subItemMinHeight : _rowMinHeight;
+    final horizontalPadding = isSubItem ? 14.0 : 16.0;
+    final toggleHorizontalPadding = isSubItem ? 12.0 : 14.0;
+    final leadingGap = isSubItem ? 8.0 : 10.0;
+    final leadingInset = isSubItem ? 26.0 : 0.0;
+    final labelStyle = TextStyle(
+      color: appText,
+      fontSize: isSubItem ? 14 : 15,
+      fontWeight: isSubItem ? FontWeight.w500 : FontWeight.w500,
+    );
     final leading = item.iconAssetPath != null
         ? SvgPicture.asset(
             item.iconAssetPath!,
-            width: item.iconSize - 2,
-            height: item.iconSize - 2,
+            width: isSubItem ? item.iconSize - 4 : item.iconSize - 2,
+            height: isSubItem ? item.iconSize - 4 : item.iconSize - 2,
             colorFilter: const ColorFilter.mode(
               appMutedText,
               BlendMode.srcIn,
             ),
           )
         : const Icon(Icons.block_outlined, color: appMutedText, size: 22);
+
+    if (item.isAction) {
+      return Material(
+        color: Colors.transparent,
+        child: Ink(
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            splashColor: brand.withValues(alpha: 0.14),
+            highlightColor: appText.withValues(alpha: 0.03),
+            onTap: () => onActionPressed?.call(item.keyName),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: rowMinHeight),
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: toggleHorizontalPadding),
+                child: Row(
+                  children: [
+                    SizedBox(width: leadingInset),
+                    leading,
+                    SizedBox(width: leadingGap),
+                    Expanded(
+                      child: Text(
+                        item.label,
+                        style: labelStyle.copyWith(color: appMutedText),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
 
     if (item.isTimeLimit) {
       return Material(
@@ -1491,21 +1763,18 @@ class _BlockItemRow extends StatelessWidget {
             highlightColor: appText.withValues(alpha: 0.03),
             onTap: () => _showTimeLimitPicker(context),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: _rowMinHeight),
+              constraints: BoxConstraints(minHeight: rowMinHeight),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
                 child: Row(
                   children: [
+                    SizedBox(width: leadingInset),
                     leading,
-                    const SizedBox(width: 10),
+                    SizedBox(width: leadingGap),
                     Expanded(
                       child: Text(
                         item.label,
-                        style: const TextStyle(
-                          color: appText,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
-                        ),
+                        style: labelStyle,
                       ),
                     ),
                     Text(
@@ -1541,21 +1810,18 @@ class _BlockItemRow extends StatelessWidget {
           highlightColor: appText.withValues(alpha: 0.03),
           onTap: () => onToggleChanged(!(item.value ?? false)),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: _rowMinHeight),
+            constraints: BoxConstraints(minHeight: rowMinHeight),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
+              padding: EdgeInsets.symmetric(horizontal: toggleHorizontalPadding),
               child: Row(
                 children: [
+                  SizedBox(width: leadingInset),
                   leading,
-                  const SizedBox(width: 10),
+                  SizedBox(width: leadingGap),
                   Expanded(
                     child: Text(
                       item.label,
-                      style: const TextStyle(
-                        color: appText,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
-                      ),
+                      style: labelStyle,
                     ),
                   ),
                   Switch(
@@ -1591,6 +1857,8 @@ class _DurationWheel extends StatelessWidget {
     required this.onSelectedItemChanged,
   });
 
+  static const double _itemExtent = 38;
+
   final FixedExtentScrollController controller;
   final List<int> values;
   final String Function(int value) labelBuilder;
@@ -1606,7 +1874,7 @@ class _DurationWheel extends StatelessWidget {
       ),
       child: CupertinoPicker(
         scrollController: controller,
-        itemExtent: 44,
+        itemExtent: _itemExtent,
         selectionOverlay: Container(
           margin: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
@@ -1628,7 +1896,7 @@ class _DurationWheel extends StatelessWidget {
               labelBuilder(values[index]),
               style: const TextStyle(
                 color: appText,
-                fontSize: 22,
+                fontSize: 18,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1691,7 +1959,7 @@ Future<void> showDailyTimeLimitPicker(
               mainAxisSize: MainAxisSize.min,
               children: [
                 SizedBox(
-                  height: 180,
+                  height: 148,
                   child: Row(
                     children: [
                       Expanded(
@@ -1712,7 +1980,7 @@ Future<void> showDailyTimeLimitPicker(
                           ':',
                           style: TextStyle(
                             color: appMutedText,
-                            fontSize: 28,
+                            fontSize: 22,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -1751,26 +2019,52 @@ Future<void> showDailyTimeLimitPicker(
                   ],
                 ),
                 const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: TextButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(-10),
-                    child: const Text('10 Seconds'),
-                  ),
-                ),
-                SizedBox(
-                  width: double.infinity,
-                  child: TextButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(0),
-                    child: const Text('No Limit'),
-                  ),
-                ),
-                SizedBox(
-                  width: double.infinity,
-                  child: TextButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(-1),
-                    child: const Text('Block Completely'),
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => Navigator.of(dialogContext).pop(0),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 10,
+                          ),
+                        ),
+                        icon: SvgPicture.asset(
+                          'assets/icons/no_limit.svg',
+                          width: 18,
+                          height: 18,
+                          colorFilter: const ColorFilter.mode(
+                            appMutedText,
+                            BlendMode.srcIn,
+                          ),
+                        ),
+                        label: const Text('Unlimited'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => Navigator.of(dialogContext).pop(-1),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 10,
+                          ),
+                        ),
+                        icon: SvgPicture.asset(
+                          'assets/icons/block.svg',
+                          width: 18,
+                          height: 18,
+                          colorFilter: const ColorFilter.mode(
+                            appMutedText,
+                            BlendMode.srcIn,
+                          ),
+                        ),
+                        label: const Text('Block'),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 4),
                 const Divider(color: appBorder),
@@ -1841,7 +2135,9 @@ class _BlockItemData {
     required this.value,
     this.iconAssetPath,
     this.iconSize = 22,
+    this.isSubItem = false,
   }) : minutes = null,
+       isAction = false,
        isTimeLimit = false;
 
   const _BlockItemData.timeLimit({
@@ -1851,7 +2147,20 @@ class _BlockItemData {
     this.iconAssetPath,
     this.iconSize = 22,
   }) : value = null,
+       isSubItem = false,
+       isAction = false,
        isTimeLimit = true;
+
+  const _BlockItemData.action({
+    required this.keyName,
+    required this.label,
+    this.iconAssetPath,
+    this.iconSize = 22,
+  }) : value = null,
+       minutes = null,
+       isSubItem = false,
+       isAction = true,
+       isTimeLimit = false;
 
   final String keyName;
   final String label;
@@ -1860,4 +2169,6 @@ class _BlockItemData {
   final String? iconAssetPath;
   final double iconSize;
   final bool isTimeLimit;
+  final bool isSubItem;
+  final bool isAction;
 }

@@ -1,4 +1,4 @@
-package com.example.tempus
+package com.prestige.tempus
 
 import android.accessibilityservice.AccessibilityService
 import android.app.usage.UsageEvents
@@ -18,11 +18,15 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private val enforcementHandler = Handler(Looper.getMainLooper())
     private val lastVisibleBlockedWebsiteByPackage = mutableMapOf<String, String?>()
     private var promptTarget: String? = null
+    private var promptPackageName: String? = null
     private var lastInstagramReelsScanAtMillis = 0L
     private var instagramReelsDetectedUntilMillis = 0L
+    private var lastYouTubeShortsScanAtMillis = 0L
+    private var youTubeShortsDetectedUntilMillis = 0L
 
     override fun onServiceConnected() {
         activeService = this
+        handleAccessibilityEnabledReturn()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -38,18 +42,28 @@ class AppGuardAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
 
         val previousPackageName = lastForegroundPackage
+        val packageChanged = previousPackageName != packageName
         if (previousPackageName != null && previousPackageName != packageName) {
             lastVisibleBlockedWebsiteByPackage.remove(previousPackageName)
+            if (
+                previousPackageName == pauseOnOpenAllowedPackageName &&
+                packageName != this.packageName
+            ) {
+                pauseOnOpenAllowedPackageName = null
+            }
         }
         if (packageName != lastForegroundPackage) {
             lastForegroundPackage = packageName
             if (packageName != INSTAGRAM_PACKAGE_NAME) {
                 clearInstagramReelsDetectionCache()
             }
+            if (!isYouTubePackage(packageName)) {
+                clearYouTubeShortsDetectionCache()
+            }
             if (
                 promptActive &&
                 promptTarget != null &&
-                shouldDismissPromptForPackage(packageName, promptTarget!!)
+                shouldDismissPromptForPackage(packageName, promptPackageName)
             ) {
                 dismissPromptOverlay()
             }
@@ -57,9 +71,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
         if (packageName == INSTAGRAM_PACKAGE_NAME && INSTAGRAM_DEBUG_LOGS_ENABLED) {
             logInstagramEvent(event, eventType)
-        }
-        if (isYouTubePackage(packageName) && YOUTUBE_DEBUG_LOGS_ENABLED) {
-            logYouTubeEvent(event, eventType, packageName)
         }
 
         if (shouldBlockPackage(packageName)) {
@@ -80,13 +91,17 @@ class AppGuardAccessibilityService : AccessibilityService() {
         }
 
         if (promptActive || isPackageTemporarilyAllowed(packageName)) return
+        if (shouldOpenPauseOnOpenPrompt(packageName, packageChanged)) {
+            openPauseOnOpenPrompt(packageName)
+            return
+        }
         if (packageName == INSTAGRAM_PACKAGE_NAME) {
             if (!shouldOpenInstagramBlockPrompt(event, eventType)) return
             openInstagramPrompt()
             return
         }
         if (isYouTubePackage(packageName)) {
-            if (!shouldOpenYouTubeBlockPrompt(event, eventType)) return
+            if (!shouldOpenYouTubeBlockPrompt(packageName, eventType)) return
             openYouTubePrompt()
         }
     }
@@ -260,20 +275,43 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
     private fun openInstagramPrompt() {
         promptActive = true
-        showPromptActivity(TARGET_INSTAGRAM)
+        showPromptActivity(
+            target = TARGET_INSTAGRAM,
+            sourcePackageName = lastForegroundPackage,
+            appLabel = "Instagram",
+        )
     }
 
     private fun openYouTubePrompt() {
         promptActive = true
-        showPromptActivity(TARGET_YOUTUBE)
+        pauseYouTubeShortsPlayback(lastForegroundPackage)
+        showPromptActivity(
+            target = TARGET_YOUTUBE,
+            sourcePackageName = lastForegroundPackage,
+            appLabel = "YouTube",
+        )
     }
 
-    private fun showPromptActivity(target: String) {
+    private fun openPauseOnOpenPrompt(packageName: String) {
+        promptActive = true
+        showPauseOnOpenActivity(
+            sourcePackageName = packageName,
+            appLabel = getPauseOnOpenPromptLabel(packageName),
+        )
+    }
+
+    private fun showPromptActivity(
+        target: String,
+        sourcePackageName: String?,
+        appLabel: String,
+    ) {
         enforcementHandler.post {
             dismissPromptState()
             promptTarget = target
+            promptPackageName = sourcePackageName
             val intent = Intent(this, ConfirmBlockerActivity::class.java).apply {
                 putExtra(ConfirmBlockerActivity.EXTRA_TARGET, target)
+                putExtra(ConfirmBlockerActivity.EXTRA_APP_LABEL, appLabel)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -290,6 +328,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
     private fun dismissPromptState() {
         promptTarget = null
+        promptPackageName = null
         promptActive = false
     }
 
@@ -299,18 +338,81 @@ class AppGuardAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun doesPackageMatchPromptTarget(packageName: String, target: String): Boolean {
-        return when (target) {
-            TARGET_YOUTUBE -> isYouTubePackage(packageName)
-            else -> packageName == INSTAGRAM_PACKAGE_NAME
-        }
-    }
-
-    private fun shouldDismissPromptForPackage(packageName: String, target: String): Boolean {
+    private fun shouldDismissPromptForPackage(
+        packageName: String,
+        sourcePackageName: String?,
+    ): Boolean {
         if (packageName == this.packageName) return false
         if (packageName == "android") return false
         if (packageName == "com.android.systemui") return false
-        return !doesPackageMatchPromptTarget(packageName, target)
+        if (sourcePackageName.isNullOrBlank()) return true
+        return packageName != sourcePackageName
+    }
+
+    private fun shouldOpenPauseOnOpenPrompt(
+        packageName: String,
+        packageChanged: Boolean,
+    ): Boolean {
+        if (!packageChanged) return false
+        if (packageName == this.packageName) return false
+        if (packageName == "android") return false
+        if (packageName == "com.android.systemui") return false
+        if (packageName == pauseOnOpenAllowedPackageName) return false
+        return isPauseOnOpenEnabledForPackage(packageName)
+    }
+
+    private fun isPauseOnOpenEnabledForPackage(packageName: String): Boolean {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return when {
+            packageName == INSTAGRAM_PACKAGE_NAME -> {
+                prefs.getBoolean(INSTAGRAM_PAUSE_ON_OPEN_SETTING_KEY, false)
+            }
+            isYouTubePackage(packageName) -> {
+                prefs.getBoolean(YOUTUBE_PAUSE_ON_OPEN_SETTING_KEY, false)
+            }
+            else -> {
+                prefs.getBoolean(customTrackedAppPauseOnOpenSettingKey(packageName), false)
+            }
+        }
+    }
+
+    private fun showPauseOnOpenActivity(
+        sourcePackageName: String,
+        appLabel: String,
+    ) {
+        enforcementHandler.post {
+            dismissPromptState()
+            promptTarget = TARGET_PAUSE_ON_OPEN
+            promptPackageName = sourcePackageName
+            val intent = Intent(this, PauseOnOpenActivity::class.java).apply {
+                putExtra(PauseOnOpenActivity.EXTRA_SOURCE_PACKAGE_NAME, sourcePackageName)
+                putExtra(PauseOnOpenActivity.EXTRA_APP_LABEL, appLabel)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            runCatching {
+                startActivity(intent)
+                Log.d(PROMPT_DEBUG_TAG, "Showing pause-on-open activity for package=$sourcePackageName")
+            }.onFailure {
+                Log.e(PROMPT_DEBUG_TAG, "Failed to show pause-on-open activity", it)
+                dismissPromptState()
+            }
+        }
+    }
+
+    private fun getPauseOnOpenPromptLabel(packageName: String): String {
+        return when {
+            packageName == INSTAGRAM_PACKAGE_NAME -> "Instagram"
+            isYouTubePackage(packageName) -> "YouTube"
+            else -> {
+                getCustomTrackedApps()
+                    .firstOrNull { app -> app.packageName == packageName }
+                    ?.appName
+                    ?.takeIf { it.isNotBlank() }
+                    ?: packageName
+            }
+        }
     }
 
     private fun shouldOpenInstagramBlockPrompt(
@@ -338,14 +440,17 @@ class AppGuardAccessibilityService : AccessibilityService() {
     }
 
     private fun shouldOpenYouTubeBlockPrompt(
-        event: AccessibilityEvent,
+        packageName: String,
         eventType: Int,
     ): Boolean {
-        if (
-            eventType == AccessibilityEvent.TYPE_VIEW_CLICKED &&
-            isYouTubeShortsBlockingEnabled()
-        ) {
-            return isYouTubeShortsClick(event)
+        if (isYouTubeShortsBlockingEnabled()) {
+            if (
+                (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+                    eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) &&
+                isYouTubeShortsScreen(packageName)
+            ) {
+                return true
+            }
         }
         return false
     }
@@ -382,21 +487,68 @@ class AppGuardAccessibilityService : AccessibilityService() {
         instagramReelsDetectedUntilMillis = 0L
     }
 
+    private fun isYouTubeShortsScreen(packageName: String): Boolean {
+        val now = System.currentTimeMillis()
+        if (now < youTubeShortsDetectedUntilMillis) {
+            return true
+        }
+        if (now - lastYouTubeShortsScanAtMillis < YOUTUBE_SHORTS_SCAN_DEBOUNCE_MILLIS) {
+            return false
+        }
+        lastYouTubeShortsScanAtMillis = now
+
+        val rootNode = rootInActiveWindow ?: return false
+        val shortsContainerViewIds = buildYouTubeShortsContainerViewIds(packageName)
+        val isDetected = shortsContainerViewIds.any { viewId ->
+            val shortsNodes = rootNode.findAccessibilityNodeInfosByViewId(viewId) ?: return@any false
+            shortsNodes.any { node ->
+                node?.isVisibleToUser == true &&
+                    !node.isContentInvalid &&
+                    node.viewIdResourceName == viewId
+            }
+        }
+
+        if (isDetected) {
+            youTubeShortsDetectedUntilMillis = now + YOUTUBE_SHORTS_DETECTION_CACHE_MILLIS
+        }
+
+        return isDetected
+    }
+
+    private fun clearYouTubeShortsDetectionCache() {
+        lastYouTubeShortsScanAtMillis = 0L
+        youTubeShortsDetectedUntilMillis = 0L
+    }
+
+    private fun buildYouTubeShortsContainerViewIds(packageName: String): List<String> {
+        val candidates = linkedSetOf<String>()
+        candidates.add("$packageName:$YOUTUBE_SHORTS_CONTAINER_VIEW_ID_SUFFIX")
+        candidates.add("$YOUTUBE_PACKAGE_NAME:$YOUTUBE_SHORTS_CONTAINER_VIEW_ID_SUFFIX")
+        return candidates.toList()
+    }
+
+    private fun pauseYouTubeShortsPlayback(packageName: String?) {
+        val resolvedPackageName = packageName?.takeIf(::isYouTubePackage) ?: return
+        val rootNode = rootInActiveWindow ?: return
+        val shortsNode = buildYouTubeShortsContainerViewIds(resolvedPackageName)
+            .asSequence()
+            .flatMap { viewId ->
+                (rootNode.findAccessibilityNodeInfosByViewId(viewId) ?: emptyList()).asSequence()
+            }
+            .firstOrNull { node ->
+                node?.isVisibleToUser == true &&
+                    !node.isContentInvalid
+            }
+
+        shortsNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    }
+
     private fun isStoriesContentScreen(): Boolean {
         val rootNode = rootInActiveWindow ?: return false
         val rootText = buildNodeText(rootNode)
             .replace(Regex("\\s+"), " ")
             .trim()
         return rootText.startsWith("Send message or reaction", ignoreCase = true)
-    }
-
-    private fun isYouTubeShortsClick(event: AccessibilityEvent): Boolean {
-        val clickedLabel = buildString {
-            event.text.forEach { append(' ').append(it) }
-            append(' ').append(event.contentDescription?.toString().orEmpty())
-        }.trim()
-        return clickedLabel.equals("More actions", ignoreCase = true) ||
-            clickedLabel.equals("Shorts Shorts", ignoreCase = true)
     }
 
     private fun findBlockedWebsiteDomain(
@@ -451,19 +603,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
     private fun logInstagramEvent(event: AccessibilityEvent, eventType: Int) {
         logDebugEvent(INSTAGRAM_DEBUG_TAG, event, eventType)
-    }
-
-    private fun logYouTubeEvent(
-        event: AccessibilityEvent,
-        eventType: Int,
-        packageName: String,
-    ) {
-        logDebugEvent(
-            YOUTUBE_DEBUG_TAG,
-            event,
-            eventType,
-            prefix = "package=\"$packageName\" ",
-        )
     }
 
     private fun logDebugEvent(
@@ -531,26 +670,33 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val BLOCKED_WEBSITES_PREF_KEY = "blocked_websites"
         const val CUSTOM_TRACKED_APPS_PREF_KEY = "custom_tracked_apps"
         const val TEN_SECOND_LIMIT_VALUE = -10
+        const val AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY = "awaiting_accessibility_enable"
+        const val ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY = "accessibility_enabled_success"
         const val INSTAGRAM_PACKAGE_NAME = "com.instagram.android"
         const val YOUTUBE_PACKAGE_NAME = "com.google.android.youtube"
         const val YOUTUBE_REVANCED_PACKAGE_PREFIX = "app.revanced.android.youtube"
         const val INSTAGRAM_REELS_SETTING_KEY = "instagram_reels"
+        const val INSTAGRAM_PAUSE_ON_OPEN_SETTING_KEY = "instagram_pause_on_open"
         const val INSTAGRAM_STORIES_SETTING_KEY = "instagram_explore"
+        const val YOUTUBE_PAUSE_ON_OPEN_SETTING_KEY = "youtube_pause_on_open"
         const val YOUTUBE_SHORTS_SETTING_KEY = "youtube_shorts"
         const val TARGET_INSTAGRAM = "instagram"
         const val TARGET_YOUTUBE = "youtube"
+        const val TARGET_PAUSE_ON_OPEN = "pause_on_open"
         private const val INSTAGRAM_REELS_CONTAINER_VIEW_ID =
             "com.instagram.android:id/clips_video_container"
+        private const val YOUTUBE_SHORTS_CONTAINER_VIEW_ID_SUFFIX =
+            "id/reel_player_underlay"
         private const val INSTAGRAM_DEBUG_TAG = "TempusInstagramDebug"
-        private const val YOUTUBE_DEBUG_TAG = "TempusYouTubeDebug"
         private const val PROMPT_DEBUG_TAG = "TempusPromptOverlay"
         private const val BLOCK_RETRY_COUNT = 6
         private const val BLOCK_RETRY_DELAY_MS = 250L
         private const val PROMPT_SUPPRESSION_MILLIS = 800L
         private const val INSTAGRAM_DEBUG_LOGS_ENABLED = false
-        private const val YOUTUBE_DEBUG_LOGS_ENABLED = true
         private const val INSTAGRAM_REELS_SCAN_DEBOUNCE_MILLIS = 250L
         private const val INSTAGRAM_REELS_DETECTION_CACHE_MILLIS = 1200L
+        private const val YOUTUBE_SHORTS_SCAN_DEBOUNCE_MILLIS = 250L
+        private const val YOUTUBE_SHORTS_DETECTION_CACHE_MILLIS = 1200L
         private val supportedBrowserPackages = setOf(
             "com.android.chrome",
             "com.chrome.beta",
@@ -562,29 +708,17 @@ class AppGuardAccessibilityService : AccessibilityService() {
             "com.sec.android.app.sbrowser",
             "com.opera.browser",
         )
-        private val builtInTrackedAppLimits = listOf(
-            AppLimit(
-                settingKey = "instagram_app",
-                packageNames = setOf("com.instagram.android"),
-            ),
-            AppLimit(
-                settingKey = "youtube_app",
-                packageNames = setOf("com.google.android.youtube"),
-                packagePrefixes = setOf("app.revanced.android.youtube"),
-            ),
-            AppLimit(
-                settingKey = "tiktok_app",
-                packageNames = setOf("com.zhiliaoapp.musically"),
-            ),
-            AppLimit(
-                settingKey = "snapchat_app",
-                packageNames = setOf("com.snapchat.android"),
-            ),
-            AppLimit(
-                settingKey = "facebook_app",
-                packageNames = setOf("com.facebook.katana"),
-            ),
-        )
+    private val builtInTrackedAppLimits = listOf(
+        AppLimit(
+            settingKey = "instagram_app",
+            packageNames = setOf("com.instagram.android"),
+        ),
+        AppLimit(
+            settingKey = "youtube_app",
+            packageNames = setOf("com.google.android.youtube"),
+            packagePrefixes = setOf("app.revanced.android.youtube"),
+        ),
+    )
 
         @Volatile
         private var promptActive = false
@@ -600,6 +734,9 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
         @Volatile
         private var promptSuppressedUntilMillis = 0L
+
+        @Volatile
+        private var pauseOnOpenAllowedPackageName: String? = null
 
         fun dismissPrompt() {
             activeService?.dismissPromptOverlay() ?: run {
@@ -617,6 +754,16 @@ class AppGuardAccessibilityService : AccessibilityService() {
             )
         }
 
+        fun closePauseOnOpenTarget() {
+            promptSuppressedUntilMillis = System.currentTimeMillis() + PROMPT_SUPPRESSION_MILLIS
+            activeService?.enforcementHandler?.postDelayed(
+                {
+                    activeService?.goHome()
+                },
+                150L,
+            )
+        }
+
         fun allowTargetForMinutes(target: String, minutes: Int) {
             val allowedUntil = System.currentTimeMillis() + minutes * 60 * 1000L
             when (target.lowercase()) {
@@ -627,6 +774,15 @@ class AppGuardAccessibilityService : AccessibilityService() {
                     instagramAllowedUntilMillis = allowedUntil
                 }
             }
+            activeService?.dismissPromptOverlay() ?: run {
+                promptActive = false
+            }
+        }
+
+        fun allowPauseOnOpen(packageName: String?) {
+            if (packageName.isNullOrBlank()) return
+            pauseOnOpenAllowedPackageName = packageName
+            promptSuppressedUntilMillis = System.currentTimeMillis() + PROMPT_SUPPRESSION_MILLIS
             activeService?.dismissPromptOverlay() ?: run {
                 promptActive = false
             }
@@ -664,6 +820,33 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
     private fun customTrackedAppSettingKey(packageName: String): String {
         return "custom_app_" + packageName.replace(Regex("[^A-Za-z0-9]+"), "_")
+    }
+
+    private fun customTrackedAppPauseOnOpenSettingKey(packageName: String): String {
+        return "custom_app_pause_on_open_" + packageName.replace(Regex("[^A-Za-z0-9]+"), "_")
+    }
+
+    private fun handleAccessibilityEnabledReturn() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val awaitingEnable = prefs.getBoolean(AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY, false)
+        if (!awaitingEnable) return
+
+        prefs.edit()
+            .putBoolean(AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY, false)
+            .putBoolean(ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY, true)
+            .apply()
+
+        val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        } ?: return
+
+        runCatching {
+            startActivity(intent)
+        }.onFailure {
+            Log.e(PROMPT_DEBUG_TAG, "Failed to relaunch app after accessibility enable", it)
+        }
     }
 }
 

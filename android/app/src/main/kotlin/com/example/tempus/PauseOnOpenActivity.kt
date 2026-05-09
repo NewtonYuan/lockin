@@ -15,38 +15,33 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 
-class ConfirmBlockerActivity : Activity() {
-    private val minuteOptions = intArrayOf(1, 2, 3, 5, 10, 15, 30, 60)
-
-    private val target: String
-        get() = intent?.getStringExtra(EXTRA_TARGET) ?: TARGET_INSTAGRAM
+class PauseOnOpenActivity : Activity() {
+    private val sourcePackageName: String?
+        get() = intent?.getStringExtra(EXTRA_SOURCE_PACKAGE_NAME)
 
     private val appLabel: String
         get() = intent?.getStringExtra(EXTRA_APP_LABEL)
             ?.takeIf { it.isNotBlank() }
-            ?: when (target) {
-                TARGET_YOUTUBE -> "YouTube"
-                else -> "Instagram"
-            }
+            ?: "this app"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawableResource(android.R.color.transparent)
-        setPromptContent(createConfirmationView())
+        setPromptContent(createPromptView())
         overridePendingTransition(R.anim.prompt_fade_in, R.anim.prompt_fade_out)
     }
 
-    @Deprecated("Back is intentionally disabled for this blocking prompt")
+    @Deprecated("Back is intentionally disabled for this prompt")
     override fun onBackPressed() {
         // Intentionally no-op. Exit paths should go through the prompt actions.
     }
 
-    private fun createConfirmationView(): FrameLayout {
+    private fun createPromptView(): FrameLayout {
         return promptFrame().apply {
             addView(promptPanel().apply {
                 addView(
                     TextView(context).apply {
-                        text = "Open $appLabel?"
+                        text = "Do you really need this?"
                         setTextColor(Color.WHITE)
                         textSize = 30f
                         gravity = Gravity.CENTER
@@ -57,7 +52,7 @@ class ConfirmBlockerActivity : Activity() {
 
                 addView(
                     TextView(context).apply {
-                        text = "Do you really want to open $appLabel right now?"
+                        text = "Open $appLabel anyway?"
                         setTextColor(Color.rgb(216, 220, 226))
                         textSize = 18f
                         gravity = Gravity.CENTER
@@ -68,7 +63,7 @@ class ConfirmBlockerActivity : Activity() {
 
                 addView(
                     Button(context).apply {
-                        text = "Not now"
+                        text = "No, not really"
                         setTextColor(Color.WHITE)
                         background = prominentRippleBackground()
                         setAllCaps(false)
@@ -77,7 +72,7 @@ class ConfirmBlockerActivity : Activity() {
                         minHeight = dp(48)
                         setOnClickListener {
                             AppGuardAccessibilityService.dismissPrompt()
-                            AppGuardAccessibilityService.returnToPreviousPageAfterPrompt()
+                            AppGuardAccessibilityService.closePauseOnOpenTarget()
                             finish()
                         }
                     },
@@ -94,67 +89,13 @@ class ConfirmBlockerActivity : Activity() {
                         background = textRippleBackground()
                         setPadding(0, dp(18), 0, dp(18))
                         setOnClickListener {
-                            setPromptContent(createMinutesView())
+                            AppGuardAccessibilityService.allowPauseOnOpen(sourcePackageName)
+                            finish()
                         }
                     },
                     buttonLayoutParams(topMargin = dp(16)),
                 )
             })
-        }
-    }
-
-    private fun createMinutesView(): FrameLayout {
-        return promptFrame().apply {
-            addView(promptPanel().apply {
-                addView(
-                    TextView(context).apply {
-                        text = "How many minutes?"
-                        setTextColor(Color.WHITE)
-                        textSize = 30f
-                        gravity = Gravity.CENTER
-                        setTypeface(typeface, Typeface.BOLD)
-                    },
-                    matchWidthLayoutParams(),
-                )
-
-                addView(
-                    TextView(context).apply {
-                        text = "Choose how long $appLabel should stay open."
-                        setTextColor(Color.rgb(216, 220, 226))
-                        textSize = 18f
-                        gravity = Gravity.CENTER
-                        setPadding(0, dp(24), 0, dp(36))
-                    },
-                    matchWidthLayoutParams(),
-                )
-
-                minuteOptions.forEach { minutes ->
-                    addView(
-                        Button(context).apply {
-                            text = durationLabel(minutes)
-                            setTextColor(Color.WHITE)
-                            background = prominentRippleBackground()
-                            setAllCaps(false)
-                            textSize = 16f
-                            setTypeface(typeface, Typeface.BOLD)
-                            minHeight = dp(48)
-                            setOnClickListener {
-                                AppGuardAccessibilityService.allowTargetForMinutes(target, minutes)
-                                finish()
-                            }
-                        },
-                        buttonLayoutParams(topMargin = dp(8)),
-                    )
-                }
-            })
-        }
-    }
-
-    private fun durationLabel(minutes: Int): String {
-        return when (minutes) {
-            1 -> "1 minute"
-            60 -> "1 hour"
-            else -> "$minutes minutes"
         }
     }
 
@@ -260,10 +201,8 @@ class ConfirmBlockerActivity : Activity() {
     }
 
     companion object {
-        const val EXTRA_TARGET = "target"
+        const val EXTRA_SOURCE_PACKAGE_NAME = "source_package_name"
         const val EXTRA_APP_LABEL = "app_label"
-        const val TARGET_INSTAGRAM = "instagram"
-        const val TARGET_YOUTUBE = "youtube"
         const val BRAND = 0xFF00688F.toInt()
         const val BRAND_PRESSED = 0xFF00A6D6.toInt()
     }

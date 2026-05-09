@@ -62,9 +62,6 @@ flutter:
     - assets/icons/block.svg
     - assets/apps/instagram.svg
     - assets/apps/youtube.svg
-    - assets/apps/tiktok.svg
-    - assets/apps/snapchat.svg
-    - assets/apps/facebook.jpg
     - assets/icons/timer.svg
     - assets/icons/statistics.svg
     - assets/icons/settings.svg
@@ -74,6 +71,9 @@ flutter:
     - assets/icons/install_day_star.svg
     - assets/icons/help.svg
     - assets/icons/edit.svg
+    - assets/icons/instagram_reels_dm.svg
+    - assets/icons/pause_on_open.svg
+    - assets/icons/no_limit.svg
     - assets/images/through_the_park_empty.svg
     - assets/images/statistics_coming_soon.svg
 
