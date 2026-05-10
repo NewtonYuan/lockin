@@ -5,24 +5,26 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.Calendar
+import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONArray
 
 class AppGuardAccessibilityService : AccessibilityService() {
     private var lastForegroundPackage: String? = null
     private val enforcementHandler = Handler(Looper.getMainLooper())
-    private val lastVisibleBlockedWebsiteByPackage = mutableMapOf<String, String?>()
     private var promptTarget: String? = null
     private var promptPackageName: String? = null
     private var lastInstagramReelsScanAtMillis = 0L
     private var instagramReelsDetectedUntilMillis = 0L
     private var lastYouTubeShortsScanAtMillis = 0L
     private var youTubeShortsDetectedUntilMillis = 0L
+    private val lastVisibleBlockedWebsiteByPackage = mutableMapOf<String, String>()
 
     override fun onServiceConnected() {
         activeService = this
@@ -44,13 +46,14 @@ class AppGuardAccessibilityService : AccessibilityService() {
         val previousPackageName = lastForegroundPackage
         val packageChanged = previousPackageName != packageName
         if (previousPackageName != null && previousPackageName != packageName) {
-            lastVisibleBlockedWebsiteByPackage.remove(previousPackageName)
             if (
                 previousPackageName == pauseOnOpenAllowedPackageName &&
                 packageName != this.packageName
             ) {
                 pauseOnOpenAllowedPackageName = null
             }
+            temporarilyAllowedWebsiteDomainsByPackage.remove(previousPackageName)
+            lastVisibleBlockedWebsiteByPackage.remove(previousPackageName)
         }
         if (packageName != lastForegroundPackage) {
             lastForegroundPackage = packageName
@@ -78,16 +81,20 @@ class AppGuardAccessibilityService : AccessibilityService() {
             return
         }
 
-        val blockedWebsiteDomain = findBlockedWebsiteDomain(packageName, event)
-        if (blockedWebsiteDomain != null) {
-            val previousBlockedDomain = lastVisibleBlockedWebsiteByPackage[packageName]
+        val blockedWebsiteDomain = findBlockedWebsiteDomain(packageName)
+        if (blockedWebsiteDomain == null) {
+            lastVisibleBlockedWebsiteByPackage.remove(packageName)
+            temporarilyAllowedWebsiteDomainsByPackage.remove(packageName)
+        } else {
             lastVisibleBlockedWebsiteByPackage[packageName] = blockedWebsiteDomain
-            if (!blockedWebsiteDomain.equals(previousBlockedDomain, ignoreCase = true)) {
-                enforceBlockedWebsite(packageName, blockedWebsiteDomain)
+            if (
+                !promptActive &&
+                !isPackageTemporarilyAllowed(packageName) &&
+                !isBlockedWebsiteTemporarilyAllowed(packageName, blockedWebsiteDomain)
+            ) {
+                openWebsitePrompt(packageName, blockedWebsiteDomain)
                 return
             }
-        } else if (isSupportedBrowserPackage(packageName)) {
-            lastVisibleBlockedWebsiteByPackage[packageName] = null
         }
 
         if (promptActive || isPackageTemporarilyAllowed(packageName)) return
@@ -113,7 +120,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
             activeService = null
         }
         enforcementHandler.removeCallbacksAndMessages(null)
-        lastVisibleBlockedWebsiteByPackage.clear()
         dismissPromptState()
         super.onDestroy()
     }
@@ -155,19 +161,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private fun isYouTubeShortsBlockingEnabled(): Boolean {
         return getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(YOUTUBE_SHORTS_SETTING_KEY, false)
-    }
-
-    private fun getBlockedWebsiteDomains(): List<String> {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val serialized = prefs.getString(BLOCKED_WEBSITES_PREF_KEY, null) ?: return emptyList()
-        val jsonArray = JSONArray(serialized)
-        return List(jsonArray.length()) { index ->
-            jsonArray.getJSONObject(index).optString("domain")
-        }.map { domain ->
-            normalizeDomain(domain)
-        }.filter { domain ->
-            domain.isNotBlank()
-        }
     }
 
     private fun getTodayForegroundMillis(appLimit: AppLimit): Long {
@@ -256,23 +249,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun enforceBlockedWebsite(packageName: String, blockedDomain: String) {
-        goHome()
-        repeat(BLOCK_RETRY_COUNT) { retryIndex ->
-            enforcementHandler.postDelayed(
-                {
-                    if (
-                        lastForegroundPackage == packageName &&
-                        isBlockedWebsiteVisibleForPackage(packageName, blockedDomain)
-                    ) {
-                        goHome()
-                    }
-                },
-                (retryIndex + 1) * BLOCK_RETRY_DELAY_MS,
-            )
-        }
-    }
-
     private fun openInstagramPrompt() {
         promptActive = true
         showPromptActivity(
@@ -297,6 +273,14 @@ class AppGuardAccessibilityService : AccessibilityService() {
         showPauseOnOpenActivity(
             sourcePackageName = packageName,
             appLabel = getPauseOnOpenPromptLabel(packageName),
+        )
+    }
+
+    private fun openWebsitePrompt(packageName: String, domain: String) {
+        promptActive = true
+        showWebsiteBlockActivity(
+            sourcePackageName = packageName,
+            domain = domain,
         )
     }
 
@@ -401,6 +385,31 @@ class AppGuardAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun showWebsiteBlockActivity(
+        sourcePackageName: String,
+        domain: String,
+    ) {
+        enforcementHandler.post {
+            dismissPromptState()
+            promptTarget = TARGET_WEBSITE
+            promptPackageName = sourcePackageName
+            val intent = Intent(this, WebsiteBlockActivity::class.java).apply {
+                putExtra(WebsiteBlockActivity.EXTRA_SOURCE_PACKAGE_NAME, sourcePackageName)
+                putExtra(WebsiteBlockActivity.EXTRA_DOMAIN, domain)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            runCatching {
+                startActivity(intent)
+                Log.d(PROMPT_DEBUG_TAG, "Showing website block activity for domain=$domain")
+            }.onFailure {
+                Log.e(PROMPT_DEBUG_TAG, "Failed to show website block activity", it)
+                dismissPromptState()
+            }
+        }
+    }
+
     private fun getPauseOnOpenPromptLabel(packageName: String): String {
         return when {
             packageName == INSTAGRAM_PACKAGE_NAME -> "Instagram"
@@ -412,6 +421,66 @@ class AppGuardAccessibilityService : AccessibilityService() {
                     ?.takeIf { it.isNotBlank() }
                     ?: packageName
             }
+        }
+    }
+
+    private fun isBlockedWebsiteTemporarilyAllowed(
+        packageName: String,
+        domain: String,
+    ): Boolean {
+        val allowedWebsite = temporarilyAllowedWebsiteDomainsByPackage[packageName] ?: return false
+        val now = System.currentTimeMillis()
+        if (now >= allowedWebsite.allowedUntilMillis) {
+            temporarilyAllowedWebsiteDomainsByPackage.remove(packageName)
+            return false
+        }
+        return allowedWebsite.domain.equals(domain, ignoreCase = true)
+    }
+
+    private fun findBlockedWebsiteDomain(packageName: String): String? {
+        if (!isSupportedBrowserPackage(packageName)) return null
+        val blockedDomains = getBlockedWebsiteDomains()
+        if (blockedDomains.isEmpty()) return null
+
+        val rootNode = rootInActiveWindow ?: return null
+        val visibleText = buildNodeText(rootNode)
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .lowercase()
+        if (visibleText.isBlank()) return null
+
+        return blockedDomains.firstOrNull { domain ->
+            containsBlockedDomain(visibleText, domain)
+        }
+    }
+
+    private fun containsBlockedDomain(text: String, domain: String): Boolean {
+        val normalizedDomain = normalizeDomain(domain)
+        if (normalizedDomain.isBlank()) return false
+        val escapedDomain = Regex.escape(normalizedDomain)
+        val pattern = Regex(
+            """(^|[^a-z0-9.-])(?:https?://)?(?:www\.)?$escapedDomain(?=$|[/:?\s])""",
+        )
+        return pattern.containsMatchIn(text)
+    }
+
+    private fun normalizeDomain(input: String): String {
+        return input.trim()
+            .lowercase()
+            .replaceFirst(Regex("^https?://"), "")
+            .replaceFirst(Regex("^www\\."), "")
+            .replace(Regex("/.*$"), "")
+            .trim()
+    }
+
+    private fun getBlockedWebsiteDomains(): List<String> {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val serialized = prefs.getString(BLOCKED_WEBSITES_PREF_KEY, null) ?: return emptyList()
+        val blockedWebsiteArray = JSONArray(serialized)
+        return List(blockedWebsiteArray.length()) { index ->
+            normalizeDomain(blockedWebsiteArray.getJSONObject(index).optString("domain"))
+        }.filter { domain ->
+            domain.isNotBlank()
         }
     }
 
@@ -551,56 +620,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
         return rootText.startsWith("Send message or reaction", ignoreCase = true)
     }
 
-    private fun findBlockedWebsiteDomain(
-        packageName: String,
-        event: AccessibilityEvent,
-    ): String? {
-        if (!isSupportedBrowserPackage(packageName)) return null
-        val blockedDomains = getBlockedWebsiteDomains()
-        if (blockedDomains.isEmpty()) return null
-        val visibleText = buildVisibleBrowserText(event)
-        return blockedDomains.firstOrNull { domain ->
-            containsBlockedDomain(visibleText, domain)
-        }
-    }
-
-    private fun isBlockedWebsiteVisibleForPackage(
-        packageName: String,
-        blockedDomain: String,
-    ): Boolean {
-        if (!isSupportedBrowserPackage(packageName)) return false
-        val rootNode = rootInActiveWindow ?: return false
-        val visibleText = buildNodeText(rootNode)
-        return containsBlockedDomain(visibleText, blockedDomain)
-    }
-
-    private fun buildVisibleBrowserText(event: AccessibilityEvent): String {
-        val eventText = buildString {
-            event.text.forEach { append(' ').append(it) }
-            append(' ').append(event.contentDescription?.toString().orEmpty())
-        }
-        val rootText = rootInActiveWindow?.let(::buildNodeText).orEmpty()
-        return "$eventText $rootText".replace(Regex("\\s+"), " ").trim()
-    }
-
-    private fun containsBlockedDomain(visibleText: String, blockedDomain: String): Boolean {
-        if (visibleText.isBlank() || blockedDomain.isBlank()) return false
-        val normalizedText = visibleText.lowercase()
-        val normalizedDomain = normalizeDomain(blockedDomain)
-        if (normalizedDomain.isBlank()) return false
-        return normalizedText.contains(normalizedDomain)
-    }
-
-    private fun normalizeDomain(domain: String): String {
-        return domain
-            .trim()
-            .lowercase()
-            .removePrefix("https://")
-            .removePrefix("http://")
-            .removePrefix("www.")
-            .trimEnd('/')
-    }
-
     private fun logInstagramEvent(event: AccessibilityEvent, eventType: Int) {
         logDebugEvent(INSTAGRAM_DEBUG_TAG, event, eventType)
     }
@@ -662,13 +681,13 @@ class AppGuardAccessibilityService : AccessibilityService() {
     }
 
     private fun isSupportedBrowserPackage(packageName: String): Boolean {
-        return supportedBrowserPackages.contains(packageName)
+        return packageName in supportedBrowserPackages
     }
 
     companion object {
         const val PREFS_NAME = "tempus_app_guard"
-        const val BLOCKED_WEBSITES_PREF_KEY = "blocked_websites"
         const val CUSTOM_TRACKED_APPS_PREF_KEY = "custom_tracked_apps"
+        const val BLOCKED_WEBSITES_PREF_KEY = "blocked_websites"
         const val TEN_SECOND_LIMIT_VALUE = -10
         const val AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY = "awaiting_accessibility_enable"
         const val ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY = "accessibility_enabled_success"
@@ -683,6 +702,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val TARGET_INSTAGRAM = "instagram"
         const val TARGET_YOUTUBE = "youtube"
         const val TARGET_PAUSE_ON_OPEN = "pause_on_open"
+        const val TARGET_WEBSITE = "website"
         private const val INSTAGRAM_REELS_CONTAINER_VIEW_ID =
             "com.instagram.android:id/clips_video_container"
         private const val YOUTUBE_SHORTS_CONTAINER_VIEW_ID_SUFFIX =
@@ -697,28 +717,17 @@ class AppGuardAccessibilityService : AccessibilityService() {
         private const val INSTAGRAM_REELS_DETECTION_CACHE_MILLIS = 1200L
         private const val YOUTUBE_SHORTS_SCAN_DEBOUNCE_MILLIS = 250L
         private const val YOUTUBE_SHORTS_DETECTION_CACHE_MILLIS = 1200L
-        private val supportedBrowserPackages = setOf(
-            "com.android.chrome",
-            "com.chrome.beta",
-            "com.chrome.dev",
-            "com.brave.browser",
-            "com.microsoft.emmx",
-            "org.mozilla.firefox",
-            "org.mozilla.focus",
-            "com.sec.android.app.sbrowser",
-            "com.opera.browser",
+        private val builtInTrackedAppLimits = listOf(
+            AppLimit(
+                settingKey = "instagram_app",
+                packageNames = setOf("com.instagram.android"),
+            ),
+            AppLimit(
+                settingKey = "youtube_app",
+                packageNames = setOf("com.google.android.youtube"),
+                packagePrefixes = setOf("app.revanced.android.youtube"),
+            ),
         )
-    private val builtInTrackedAppLimits = listOf(
-        AppLimit(
-            settingKey = "instagram_app",
-            packageNames = setOf("com.instagram.android"),
-        ),
-        AppLimit(
-            settingKey = "youtube_app",
-            packageNames = setOf("com.google.android.youtube"),
-            packagePrefixes = setOf("app.revanced.android.youtube"),
-        ),
-    )
 
         @Volatile
         private var promptActive = false
@@ -737,6 +746,27 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
         @Volatile
         private var pauseOnOpenAllowedPackageName: String? = null
+
+        private val temporarilyAllowedWebsiteDomainsByPackage =
+            ConcurrentHashMap<String, AllowedWebsite>()
+
+        private val supportedBrowserPackages = setOf(
+            "com.android.chrome",
+            "org.chromium.chrome",
+            "com.chrome.beta",
+            "com.chrome.dev",
+            "com.google.android.apps.chrome",
+            "com.sec.android.app.sbrowser",
+            "org.mozilla.firefox",
+            "org.mozilla.focus",
+            "com.brave.browser",
+            "com.duckduckgo.mobile.android",
+            "com.microsoft.emmx",
+            "com.opera.browser",
+            "com.opera.mini.native",
+            "com.vivaldi.browser",
+            "com.kiwibrowser.browser",
+        )
 
         fun dismissPrompt() {
             activeService?.dismissPromptOverlay() ?: run {
@@ -774,6 +804,36 @@ class AppGuardAccessibilityService : AccessibilityService() {
                     instagramAllowedUntilMillis = allowedUntil
                 }
             }
+            activeService?.dismissPromptOverlay() ?: run {
+                promptActive = false
+            }
+        }
+
+        fun closeBlockedWebsiteTarget() {
+            promptSuppressedUntilMillis = System.currentTimeMillis() + PROMPT_SUPPRESSION_MILLIS
+            activeService?.enforcementHandler?.postDelayed(
+                {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com")).apply {
+                        addCategory(Intent.CATEGORY_BROWSABLE)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    runCatching {
+                        activeService?.startActivity(intent)
+                    }.onFailure {
+                        activeService?.goHome()
+                    }
+                },
+                150L,
+            )
+        }
+
+        fun allowWebsiteForMinutes(packageName: String?, domain: String?, minutes: Int) {
+            if (packageName.isNullOrBlank() || domain.isNullOrBlank()) return
+            temporarilyAllowedWebsiteDomainsByPackage[packageName] = AllowedWebsite(
+                domain = domain.trim().lowercase(),
+                allowedUntilMillis = System.currentTimeMillis() + minutes * 60 * 1000L,
+            )
+            promptSuppressedUntilMillis = System.currentTimeMillis() + PROMPT_SUPPRESSION_MILLIS
             activeService?.dismissPromptOverlay() ?: run {
                 promptActive = false
             }
@@ -864,4 +924,9 @@ private data class AppLimit(
 private data class CustomTrackedAppConfig(
     val appName: String,
     val packageName: String,
+)
+
+private data class AllowedWebsite(
+    val domain: String,
+    val allowedUntilMillis: Long,
 )

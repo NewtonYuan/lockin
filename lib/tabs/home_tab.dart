@@ -1,9 +1,11 @@
+import 'dart:typed_data';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../brand.dart';
+import 'block_tab.dart';
 import 'sticky_header.dart';
 
 class HomeOverview extends StatelessWidget {
@@ -15,6 +17,7 @@ class HomeOverview extends StatelessWidget {
     required this.firstTrackableDate,
     required this.blockSettings,
     required this.dailyTimeLimits,
+    required this.customTrackedApps,
     required this.canShowPreviousMonth,
     required this.canShowNextMonth,
     required this.onOpenBlockedShorts,
@@ -28,6 +31,7 @@ class HomeOverview extends StatelessWidget {
   final DateTime firstTrackableDate;
   final Map<String, bool> blockSettings;
   final Map<String, int?> dailyTimeLimits;
+  final List<CustomTrackedApp> customTrackedApps;
   final bool canShowPreviousMonth;
   final bool canShowNextMonth;
   final VoidCallback onOpenBlockedShorts;
@@ -83,6 +87,7 @@ class HomeOverview extends StatelessWidget {
                   onOpenBlockedShorts: onOpenBlockedShorts,
                   blockSettings: blockSettings,
                   dailyTimeLimits: dailyTimeLimits,
+                  customTrackedApps: customTrackedApps,
                 ),
               ),
               const SizedBox(height: 8),
@@ -724,11 +729,13 @@ class _HomeShortcutCardsRow extends StatelessWidget {
     required this.onOpenBlockedShorts,
     required this.blockSettings,
     required this.dailyTimeLimits,
+    required this.customTrackedApps,
   });
 
   final VoidCallback onOpenBlockedShorts;
   final Map<String, bool> blockSettings;
   final Map<String, int?> dailyTimeLimits;
+  final List<CustomTrackedApp> customTrackedApps;
 
   static const _gap = 8.0;
   static const _horizontalPadding = 12.0;
@@ -795,7 +802,9 @@ class _HomeShortcutCardsRow extends StatelessWidget {
                   titleStyle: titleStyle,
                   onTap: onOpenBlockedShorts,
                   trailing: _ResponsiveRestrictedAppsTrail(
+                    blockSettings: blockSettings,
                     dailyTimeLimits: dailyTimeLimits,
+                    customTrackedApps: customTrackedApps,
                   ),
                 ),
               ),
@@ -919,8 +928,15 @@ class _NotificationsDropdown extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: Stack(
+        clipBehavior: Clip.none,
         children: [
-          const Positioned.fill(child: SizedBox()),
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => Navigator.of(context).maybePop(),
+              child: const SizedBox.expand(),
+            ),
+          ),
           Positioned(
             top: topOffset,
             right: 16,
@@ -1201,24 +1217,14 @@ class _SegmentedRingPainter extends CustomPainter {
 
 class _RestrictedAppsTrail extends StatelessWidget {
   const _RestrictedAppsTrail({
-    required this.visibleIcons,
-    required this.overflowCount,
-  }) : assetPaths = _icons;
-
-  const _RestrictedAppsTrail.fromIcons({
-    required this.assetPaths,
+    required this.visibleApps,
     required this.visibleIcons,
     required this.overflowCount,
   });
 
-  final List<String> assetPaths;
+  final List<_RestrictedAppVisual> visibleApps;
   final int visibleIcons;
   final int overflowCount;
-
-  static const _icons = [
-    'assets/apps/instagram.svg',
-    'assets/apps/youtube.svg',
-  ];
 
   @override
   Widget build(BuildContext context) {
@@ -1228,12 +1234,7 @@ class _RestrictedAppsTrail extends StatelessWidget {
       if (children.isNotEmpty) {
         children.add(const SizedBox(width: 6));
       }
-      children.add(
-        _AppIcon(
-          assetPath: assetPaths[index],
-          size: 24,
-        ),
-      );
+      children.add(_RestrictedAppIcon(visual: visibleApps[index]));
     }
 
     if (overflowCount > 0) {
@@ -1257,27 +1258,41 @@ class _RestrictedAppsTrail extends StatelessWidget {
 
 class _ResponsiveRestrictedAppsTrail extends StatelessWidget {
   const _ResponsiveRestrictedAppsTrail({
+    required this.blockSettings,
     required this.dailyTimeLimits,
+    required this.customTrackedApps,
   });
 
+  final Map<String, bool> blockSettings;
   final Map<String, int?> dailyTimeLimits;
+  final List<CustomTrackedApp> customTrackedApps;
 
   static const _appIcons = [
     _RestrictedAppIconData(
       settingKey: 'instagram_app',
+      pauseOnOpenKey: 'instagram_pause_on_open',
       assetPath: 'assets/apps/instagram.svg',
     ),
     _RestrictedAppIconData(
       settingKey: 'youtube_app',
+      pauseOnOpenKey: 'youtube_pause_on_open',
       assetPath: 'assets/apps/youtube.svg',
     ),
   ];
 
   @override
   Widget build(BuildContext context) {
-    final visibleAppIcons = _appIcons
-        .where((app) => dailyTimeLimits[app.settingKey] != null)
-        .toList();
+    final visibleAppIcons = <_RestrictedAppVisual>[
+      ..._appIcons.where((app) {
+        return dailyTimeLimits[app.settingKey] != null ||
+            (blockSettings[app.pauseOnOpenKey] ?? false);
+      }).map((app) => _RestrictedAppVisual.asset(app.assetPath)),
+      ...customTrackedApps.where((app) {
+        return dailyTimeLimits[app.settingKey] != null ||
+            (blockSettings[customTrackedAppPauseOnOpenSettingKey(app.packageName)] ??
+                false);
+      }).map((app) => _RestrictedAppVisual.memory(app.iconBytes)),
+    ];
 
     if (visibleAppIcons.isEmpty) {
       return Text(
@@ -1318,11 +1333,8 @@ class _ResponsiveRestrictedAppsTrail extends StatelessWidget {
           height: 24,
           child: Align(
             alignment: Alignment.centerLeft,
-            child: _RestrictedAppsTrail.fromIcons(
-              assetPaths: visibleAppIcons
-                  .map((app) => app.assetPath)
-                  .take(visibleIcons)
-                  .toList(),
+            child: _RestrictedAppsTrail(
+              visibleApps: visibleAppIcons.take(visibleIcons).toList(),
               visibleIcons: visibleIcons,
               overflowCount: overflowCount,
             ),
@@ -1336,11 +1348,51 @@ class _ResponsiveRestrictedAppsTrail extends StatelessWidget {
 class _RestrictedAppIconData {
   const _RestrictedAppIconData({
     required this.settingKey,
+    required this.pauseOnOpenKey,
     required this.assetPath,
   });
 
   final String settingKey;
+  final String pauseOnOpenKey;
   final String assetPath;
+}
+
+class _RestrictedAppVisual {
+  const _RestrictedAppVisual.asset(this.assetPath)
+    : iconBytes = null;
+
+  const _RestrictedAppVisual.memory(this.iconBytes)
+    : assetPath = null;
+
+  final String? assetPath;
+  final Uint8List? iconBytes;
+}
+
+class _RestrictedAppIcon extends StatelessWidget {
+  const _RestrictedAppIcon({required this.visual});
+
+  final _RestrictedAppVisual visual;
+
+  @override
+  Widget build(BuildContext context) {
+    if (visual.assetPath != null) {
+      return _AppIcon(
+        assetPath: visual.assetPath!,
+        size: 24,
+      );
+    }
+
+    return SizedBox(
+      width: 24,
+      height: 24,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: visual.iconBytes != null
+            ? Image.memory(visual.iconBytes!, fit: BoxFit.cover)
+            : Container(color: appSurfaceStrong),
+      ),
+    );
+  }
 }
 
 class _TooltipBlockIcon extends StatelessWidget {

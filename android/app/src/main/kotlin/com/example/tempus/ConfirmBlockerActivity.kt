@@ -7,11 +7,15 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.os.Bundle
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -29,6 +33,12 @@ class ConfirmBlockerActivity : Activity() {
                 else -> "Instagram"
             }
 
+    private val blockedLabel: String
+        get() = when (target) {
+            TARGET_YOUTUBE -> "Shorts"
+            else -> "Reels"
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawableResource(android.R.color.transparent)
@@ -45,59 +55,56 @@ class ConfirmBlockerActivity : Activity() {
         return promptFrame().apply {
             addView(promptPanel().apply {
                 addView(
-                    TextView(context).apply {
-                        text = "Open $appLabel?"
-                        setTextColor(Color.WHITE)
-                        textSize = 30f
-                        gravity = Gravity.CENTER
-                        setTypeface(typeface, Typeface.BOLD)
-                    },
-                    matchWidthLayoutParams(),
+                    logoView(),
+                    logoLayoutParams(),
                 )
 
                 addView(
                     TextView(context).apply {
-                        text = "Do you really want to open $appLabel right now?"
-                        setTextColor(Color.rgb(216, 220, 226))
-                        textSize = 18f
+                        text = blockedTitle(blockedLabel)
+                        setTextColor(Color.rgb(17, 24, 39))
+                        textSize = 34f
                         gravity = Gravity.CENTER
-                        setPadding(0, dp(24), 0, dp(36))
+                        setTypeface(typeface, Typeface.BOLD)
                     },
                     matchWidthLayoutParams(),
                 )
 
                 addView(
                     Button(context).apply {
-                        text = "Not now"
+                        text = "Go Back"
                         setTextColor(Color.WHITE)
                         background = prominentRippleBackground()
                         setAllCaps(false)
-                        textSize = 14f
+                        textSize = 16f
                         setTypeface(typeface, Typeface.BOLD)
                         minHeight = dp(48)
+                        setPadding(dp(16), 0, dp(16), 0)
                         setOnClickListener {
                             AppGuardAccessibilityService.dismissPrompt()
                             AppGuardAccessibilityService.returnToPreviousPageAfterPrompt()
                             finish()
                         }
                     },
-                    buttonLayoutParams(),
+                    buttonLayoutParams(topMargin = dp(28)),
                 )
 
                 addView(
-                    TextView(context).apply {
-                        text = "Continue"
-                        setTextColor(Color.WHITE)
-                        textSize = 14f
+                    Button(context).apply {
+                        text = "Bypass this time"
+                        setTextColor(BRAND)
+                        textSize = 16f
                         gravity = Gravity.CENTER
                         setTypeface(typeface, Typeface.BOLD)
-                        background = textRippleBackground()
-                        setPadding(0, dp(18), 0, dp(18))
+                        background = outlinedRippleBackground()
+                        minHeight = dp(48)
+                        setAllCaps(false)
+                        setPadding(dp(16), 0, dp(16), 0)
                         setOnClickListener {
                             setPromptContent(createMinutesView())
                         }
                     },
-                    buttonLayoutParams(topMargin = dp(16)),
+                    buttonLayoutParams(topMargin = dp(10)),
                 )
             })
         }
@@ -107,23 +114,17 @@ class ConfirmBlockerActivity : Activity() {
         return promptFrame().apply {
             addView(promptPanel().apply {
                 addView(
-                    TextView(context).apply {
-                        text = "How many minutes?"
-                        setTextColor(Color.WHITE)
-                        textSize = 30f
-                        gravity = Gravity.CENTER
-                        setTypeface(typeface, Typeface.BOLD)
-                    },
-                    matchWidthLayoutParams(),
+                    logoView(),
+                    logoLayoutParams(),
                 )
 
                 addView(
                     TextView(context).apply {
-                        text = "Choose how long $appLabel should stay open."
-                        setTextColor(Color.rgb(216, 220, 226))
-                        textSize = 18f
+                        text = "How many minutes?"
+                        setTextColor(Color.rgb(17, 24, 39))
+                        textSize = 34f
                         gravity = Gravity.CENTER
-                        setPadding(0, dp(24), 0, dp(36))
+                        setTypeface(typeface, Typeface.BOLD)
                     },
                     matchWidthLayoutParams(),
                 )
@@ -135,9 +136,10 @@ class ConfirmBlockerActivity : Activity() {
                             setTextColor(Color.WHITE)
                             background = prominentRippleBackground()
                             setAllCaps(false)
-                            textSize = 16f
+                            textSize = 18f
                             setTypeface(typeface, Typeface.BOLD)
                             minHeight = dp(48)
+                            setPadding(dp(16), 0, dp(16), 0)
                             setOnClickListener {
                                 AppGuardAccessibilityService.allowTargetForMinutes(target, minutes)
                                 finish()
@@ -207,9 +209,16 @@ class ConfirmBlockerActivity : Activity() {
         )
     }
 
+    private fun logoLayoutParams(): LinearLayout.LayoutParams {
+        return LinearLayout.LayoutParams(dp(84), dp(84)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = dp(18)
+        }
+    }
+
     private fun promptFrame(): FrameLayout {
         return FrameLayout(this).apply {
-            setBackgroundColor(Color.rgb(9, 13, 18))
+            setBackgroundColor(Color.WHITE)
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -232,6 +241,29 @@ class ConfirmBlockerActivity : Activity() {
         }
     }
 
+    private fun logoView(): ImageView {
+        return ImageView(this).apply {
+            setImageResource(R.drawable.launch_logo)
+            imageTintList = ColorStateList.valueOf(BRAND)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+    }
+
+    private fun blockedTitle(label: String): CharSequence {
+        val title = "$label is\u00A0Blocked"
+        val spannable = SpannableString(title)
+        val blockedStart = title.lastIndexOf("Blocked")
+        if (blockedStart >= 0) {
+            spannable.setSpan(
+                ForegroundColorSpan(BRAND),
+                blockedStart,
+                title.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
+        return spannable
+    }
+
     private fun roundedBackground(color: Int): GradientDrawable {
         return GradientDrawable().apply {
             setColor(color)
@@ -251,6 +283,20 @@ class ConfirmBlockerActivity : Activity() {
         return RippleDrawable(
             ColorStateList.valueOf(BRAND_PRESSED),
             roundedBackground(Color.TRANSPARENT),
+            roundedBackground(Color.WHITE),
+        )
+    }
+
+    private fun outlinedBackground(): GradientDrawable {
+        return roundedBackground(Color.TRANSPARENT).apply {
+            setStroke(dp(2), BRAND)
+        }
+    }
+
+    private fun outlinedRippleBackground(): RippleDrawable {
+        return RippleDrawable(
+            ColorStateList.valueOf(BRAND_PRESSED),
+            outlinedBackground(),
             roundedBackground(Color.WHITE),
         )
     }

@@ -19,19 +19,21 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 
-class PauseOnOpenActivity : Activity() {
+class WebsiteBlockActivity : Activity() {
+    private val minuteOptions = intArrayOf(1, 2, 3, 5, 10, 15, 30, 60)
+
     private val sourcePackageName: String?
         get() = intent?.getStringExtra(EXTRA_SOURCE_PACKAGE_NAME)
 
-    private val appLabel: String
-        get() = intent?.getStringExtra(EXTRA_APP_LABEL)
+    private val domain: String
+        get() = intent?.getStringExtra(EXTRA_DOMAIN)
             ?.takeIf { it.isNotBlank() }
-            ?: "this app"
+            ?: "this site"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawableResource(android.R.color.transparent)
-        setPromptContent(createPromptView())
+        setPromptContent(createConfirmationView())
         overridePendingTransition(R.anim.prompt_fade_in, R.anim.prompt_fade_out)
     }
 
@@ -40,7 +42,7 @@ class PauseOnOpenActivity : Activity() {
         // Intentionally no-op. Exit paths should go through the prompt actions.
     }
 
-    private fun createPromptView(): FrameLayout {
+    private fun createConfirmationView(): FrameLayout {
         return promptFrame().apply {
             addView(promptPanel().apply {
                 addView(
@@ -50,7 +52,7 @@ class PauseOnOpenActivity : Activity() {
 
                 addView(
                     TextView(context).apply {
-                        text = blockedTitle(appLabel)
+                        text = blockedTitle(domain)
                         setTextColor(Color.rgb(17, 24, 39))
                         textSize = 34f
                         gravity = Gravity.CENTER
@@ -65,36 +67,91 @@ class PauseOnOpenActivity : Activity() {
                         setTextColor(Color.WHITE)
                         background = prominentRippleBackground()
                         setAllCaps(false)
-                        textSize = 14f
+                        textSize = 16f
                         setTypeface(typeface, Typeface.BOLD)
                         minHeight = dp(48)
                         setPadding(dp(16), 0, dp(16), 0)
                         setOnClickListener {
                             AppGuardAccessibilityService.dismissPrompt()
-                            AppGuardAccessibilityService.closePauseOnOpenTarget()
+                            AppGuardAccessibilityService.closeBlockedWebsiteTarget()
                             finish()
                         }
                     },
-                    buttonLayoutParams(),
+                    buttonLayoutParams(topMargin = dp(28)),
+                )
+
+                addView(
+                    Button(context).apply {
+                        text = "Bypass this time"
+                        setTextColor(BRAND)
+                        textSize = 16f
+                        gravity = Gravity.CENTER
+                        setTypeface(typeface, Typeface.BOLD)
+                        background = outlinedRippleBackground()
+                        minHeight = dp(48)
+                        setAllCaps(false)
+                        setPadding(dp(16), 0, dp(16), 0)
+                        setOnClickListener {
+                            setPromptContent(createMinutesView())
+                        }
+                    },
+                    buttonLayoutParams(topMargin = dp(10)),
+                )
+            })
+        }
+    }
+
+    private fun createMinutesView(): FrameLayout {
+        return promptFrame().apply {
+            addView(promptPanel().apply {
+                addView(
+                    logoView(),
+                    logoLayoutParams(),
                 )
 
                 addView(
                     TextView(context).apply {
-                        text = "Continue"
+                        text = "How many minutes?"
                         setTextColor(Color.rgb(17, 24, 39))
-                        textSize = 14f
+                        textSize = 34f
                         gravity = Gravity.CENTER
                         setTypeface(typeface, Typeface.BOLD)
-                        background = textRippleBackground()
-                        setPadding(0, dp(18), 0, dp(18))
-                        setOnClickListener {
-                            AppGuardAccessibilityService.allowPauseOnOpen(sourcePackageName)
-                            finish()
-                        }
                     },
-                    buttonLayoutParams(topMargin = dp(20)),
+                    matchWidthLayoutParams(),
                 )
+
+                minuteOptions.forEach { minutes ->
+                    addView(
+                        Button(context).apply {
+                            text = durationLabel(minutes)
+                            setTextColor(Color.WHITE)
+                            background = prominentRippleBackground()
+                            setAllCaps(false)
+                            textSize = 18f
+                            setTypeface(typeface, Typeface.BOLD)
+                            minHeight = dp(48)
+                            setPadding(dp(16), 0, dp(16), 0)
+                            setOnClickListener {
+                                AppGuardAccessibilityService.allowWebsiteForMinutes(
+                                    sourcePackageName,
+                                    domain,
+                                    minutes,
+                                )
+                                finish()
+                            }
+                        },
+                        buttonLayoutParams(topMargin = dp(8)),
+                    )
+                }
             })
+        }
+    }
+
+    private fun durationLabel(minutes: Int): String {
+        return when (minutes) {
+            1 -> "1 minute"
+            60 -> "1 hour"
+            else -> "$minutes minutes"
         }
     }
 
@@ -150,7 +207,7 @@ class PauseOnOpenActivity : Activity() {
     private fun logoLayoutParams(): LinearLayout.LayoutParams {
         return LinearLayout.LayoutParams(dp(84), dp(84)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            bottomMargin = dp(36)
+            bottomMargin = dp(18)
         }
     }
 
@@ -225,13 +282,27 @@ class PauseOnOpenActivity : Activity() {
         )
     }
 
+    private fun outlinedBackground(): GradientDrawable {
+        return roundedBackground(Color.TRANSPARENT).apply {
+            setStroke(dp(2), BRAND)
+        }
+    }
+
+    private fun outlinedRippleBackground(): RippleDrawable {
+        return RippleDrawable(
+            ColorStateList.valueOf(BRAND_PRESSED),
+            outlinedBackground(),
+            roundedBackground(Color.WHITE),
+        )
+    }
+
     private fun dp(value: Int): Int {
         return (value * resources.displayMetrics.density).toInt()
     }
 
     companion object {
         const val EXTRA_SOURCE_PACKAGE_NAME = "source_package_name"
-        const val EXTRA_APP_LABEL = "app_label"
+        const val EXTRA_DOMAIN = "domain"
         const val BRAND = 0xFF00688F.toInt()
         const val BRAND_PRESSED = 0xFF00A6D6.toInt()
     }

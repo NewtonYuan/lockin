@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import 'accessibility_enabled_screen.dart';
 import 'brand.dart';
+import 'onboarding.dart';
 import 'tabs/block_tab.dart';
 import 'tabs/home_tab.dart';
 import 'tabs/settings_tab.dart';
@@ -92,7 +92,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool? _isAccessibilityEnabled;
   bool? _isUsageAccessEnabled;
   bool _bypassAccessibilityGate = false;
-  bool _showAccessibilityEnabledScreen = false;
+  bool _hasCompletedOnboarding = false;
+  OnboardingStep _onboardingStep = OnboardingStep.intro;
   DateTime _trackerMonth = DateTime(DateTime.now().year, DateTime.now().month);
   DateTime _appInstalledOn = DateTime.now();
   List<AppUsageSegment> _usageSegments = const [];
@@ -127,6 +128,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _refreshInstalledTrackedPackages();
     _refreshUsageStats();
     _loadAppInstallDate();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _consumeSharedWebsite();
+    });
   }
 
   @override
@@ -143,6 +147,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _refreshUsageAccessStatus();
       _refreshInstalledTrackedPackages();
       _refreshUsageStats();
+      _consumeSharedWebsite();
     }
   }
 
@@ -158,7 +163,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         if (_isAccessibilityEnabled == true) {
           _bypassAccessibilityGate = false;
           if (previousValue == false) {
-            _showAccessibilityEnabledScreen = true;
+            _onboardingStep = OnboardingStep.accessibilityEnabled;
           }
         }
       });
@@ -183,7 +188,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       );
       if (!mounted || shouldShow != true) return;
       setState(() {
-        _showAccessibilityEnabledScreen = true;
+        _onboardingStep = OnboardingStep.accessibilityEnabled;
       });
     } on PlatformException {
       // Android-only setup flow. Other platforms ignore this.
@@ -224,6 +229,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() {
         _isUsageAccessEnabled = enabled ?? false;
+        if (_isUsageAccessEnabled == true &&
+            _isAccessibilityEnabled == true &&
+            !_hasCompletedOnboarding) {
+          _onboardingStep = OnboardingStep.allDone;
+        }
       });
     } on PlatformException {
       if (!mounted) return;
@@ -412,6 +422,136 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       // Android-only persistence. Other platforms keep local UI state only.
     } on MissingPluginException {
       // Android-only persistence. Other platforms keep local UI state only.
+    }
+  }
+
+  Future<void> _openWebsiteExternally(String domain) async {
+    final normalizedDomain = _normalizeWebsite(domain);
+    if (normalizedDomain.isEmpty) return;
+    final url = 'https://$normalizedDomain';
+    try {
+      await _accessibilityChannel.invokeMethod<void>(
+        'openWebsite',
+        {
+          'url': url,
+        },
+      );
+    } on PlatformException {
+      // Android-only launch path. Other platforms ignore for now.
+    } on MissingPluginException {
+      // Android-only launch path. Other platforms ignore for now.
+    }
+  }
+
+  Future<void> _consumeSharedWebsite() async {
+    try {
+      final sharedWebsite = await _accessibilityChannel.invokeMethod<String>(
+        'consumeSharedWebsite',
+      );
+      if (!mounted || sharedWebsite == null || sharedWebsite.trim().isEmpty) {
+        return;
+      }
+      await _handleSharedWebsite(sharedWebsite);
+    } on PlatformException {
+      // Android-only share path.
+    } on MissingPluginException {
+      // Android-only share path.
+    }
+  }
+
+  Future<void> _handleSharedWebsite(String rawWebsite) async {
+    final website = _normalizeWebsite(rawWebsite);
+    if (website.isEmpty || !mounted) return;
+
+    _selectTab(
+      1,
+      update: () {
+        _blockCategory = 'Websites';
+      },
+    );
+
+    final existingEntry = _blockedWebsites.cast<BlockedWebsiteEntry?>().firstWhere(
+          (entry) => entry?.domain.toLowerCase() == website.toLowerCase(),
+          orElse: () => null,
+        );
+
+    if (existingEntry != null) {
+      final shouldContinue = await showDialog<bool>(
+        context: context,
+        barrierDismissible: true,
+        builder: (context) {
+          return AlertDialog(
+            backgroundColor: appBackground,
+            surfaceTintColor: Colors.transparent,
+            title: const Text(
+              'Do you really need this?',
+              style: TextStyle(
+                color: appText,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            content: Text(
+              existingEntry.domain,
+              style: const TextStyle(
+                color: appMutedText,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('No, not really'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Continue'),
+              ),
+            ],
+          );
+        },
+      );
+      if (shouldContinue == true) {
+        await _openWebsiteExternally(existingEntry.domain);
+      }
+      return;
+    }
+
+    final shouldAdd = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: appBackground,
+          surfaceTintColor: Colors.transparent,
+          title: const Text(
+            'Add blocked website?',
+            style: TextStyle(
+              color: appText,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          content: Text(
+            website,
+            style: const TextStyle(
+              color: appMutedText,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
+    if (shouldAdd == true) {
+      _addBlockedWebsite(website);
     }
   }
 
@@ -749,6 +889,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         firstTrackableDate: _appInstalledOn,
         blockSettings: _blockSettings,
         dailyTimeLimits: _dailyTimeLimits,
+        customTrackedApps: _customTrackedApps,
         canShowPreviousMonth: _canShowPreviousTrackerMonth,
         canShowNextMonth: _canShowNextTrackerMonth,
         onOpenBlockedShorts: () {
@@ -884,6 +1025,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         },
         onOpenAccessibilitySettings: _openAccessibilitySettings,
         onOpenUsageAccessSettings: _openUsageAccessSettings,
+        onRestartOnboarding: () {
+          setState(() {
+            _hasCompletedOnboarding = false;
+            _onboardingStep = OnboardingStep.intro;
+            _selectedIndex = 0;
+          });
+          _pageController.jumpToPage(0);
+          _refreshAccessibilityStatus();
+          _refreshUsageAccessStatus();
+        },
         isAccessibilityAllowed: _isAccessibilityEnabled == true,
         isUsageAccessAllowed: _isUsageAccessEnabled == true,
       ),
@@ -892,73 +1043,34 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    if (_isAccessibilityEnabled != true && !_bypassAccessibilityGate) {
-      return Scaffold(
-        backgroundColor: appBackground,
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'To use Tempus, you must enable Accessibility.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: appText,
-                    fontWeight: FontWeight.w600,
-                    height: 1.2,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'Tempus will stay on this screen until Accessibility is enabled.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: appMutedText,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                FilledButton(
-                  onPressed: _openAccessibilitySettings,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: brand,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: const Text('Open Accessibility Settings'),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: _refreshAccessibilityStatus,
-                  child: const Text('Check again'),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      _bypassAccessibilityGate = true;
-                    });
-                  },
-                  child: const Text('Bypass for Chrome testing'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
+    if (!_hasCompletedOnboarding && !_bypassAccessibilityGate) {
+      final displayedStep = _effectiveOnboardingStep();
 
-    if (_showAccessibilityEnabledScreen) {
-      return AccessibilityEnabledScreen(
-        onNext: () {
+      return OnboardingScreen(
+        step: displayedStep,
+        onGetStarted: () {
           setState(() {
-            _showAccessibilityEnabledScreen = false;
+            _onboardingStep = OnboardingStep.enableAccessibility;
+          });
+        },
+        onOpenAccessibilitySettings: _openAccessibilitySettings,
+        onNextFromAccessibilityEnabled: () {
+          setState(() {
+            _onboardingStep = OnboardingStep.enableUsageAccess;
+          });
+        },
+        onOpenUsageAccessSettings: () async {
+          await _openUsageAccessSettings();
+          if (!mounted) return;
+          if (_isUsageAccessEnabled == true) {
+            setState(() {
+              _onboardingStep = OnboardingStep.allDone;
+            });
+          }
+        },
+        onFinish: () {
+          setState(() {
+            _hasCompletedOnboarding = true;
           });
         },
       );
@@ -996,6 +1108,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         },
       ),
     );
+  }
+
+  OnboardingStep _effectiveOnboardingStep() {
+    if (_isAccessibilityEnabled == true && _isUsageAccessEnabled == true) {
+      return OnboardingStep.allDone;
+    }
+    if (_isAccessibilityEnabled != true &&
+        _onboardingStep.index > OnboardingStep.enableAccessibility.index) {
+      return OnboardingStep.enableAccessibility;
+    }
+    if (_isAccessibilityEnabled == true &&
+        _isUsageAccessEnabled != true &&
+        _onboardingStep == OnboardingStep.allDone) {
+      return OnboardingStep.enableUsageAccess;
+    }
+    return _onboardingStep;
   }
 }
 

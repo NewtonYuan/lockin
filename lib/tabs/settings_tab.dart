@@ -9,6 +9,7 @@ class SettingsTab extends StatelessWidget {
     required this.onBackToHome,
     required this.onOpenAccessibilitySettings,
     required this.onOpenUsageAccessSettings,
+    required this.onRestartOnboarding,
     required this.isAccessibilityAllowed,
     required this.isUsageAccessAllowed,
   });
@@ -16,6 +17,7 @@ class SettingsTab extends StatelessWidget {
   final VoidCallback onBackToHome;
   final VoidCallback onOpenAccessibilitySettings;
   final VoidCallback onOpenUsageAccessSettings;
+  final VoidCallback onRestartOnboarding;
   final bool isAccessibilityAllowed;
   final bool isUsageAccessAllowed;
 
@@ -65,6 +67,18 @@ class SettingsTab extends StatelessWidget {
                     title: 'Usage Access',
                     value: isUsageAccessAllowed ? 'Allowed' : 'Denied',
                     onTap: onOpenUsageAccessSettings,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _SettingsGroup(
+                title: 'Onboarding',
+                children: [
+                  _SettingsRow(
+                    icon: Icons.replay_rounded,
+                    title: 'Run Onboarding Again',
+                    value: '',
+                    onTap: onRestartOnboarding,
                   ),
                 ],
               ),

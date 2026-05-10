@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.os.Process
@@ -27,6 +28,7 @@ import org.json.JSONObject
 open class MainActivity : FlutterActivity() {
     companion object {
         const val ACCESSIBILITY_CHANNEL_NAME = "tempus/accessibility"
+        private const val PENDING_SHARED_WEBSITE_PREF_KEY = "pending_shared_website"
     }
 
     private val scrollDayStatusesPrefKey = "scroll_day_statuses"
@@ -49,6 +51,13 @@ open class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        handleIncomingShareIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingShareIntent(intent)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -73,6 +82,9 @@ open class MainActivity : FlutterActivity() {
                 }
                 "consumeAccessibilityEnabledSuccess" -> {
                     result.success(consumeAccessibilityEnabledSuccess())
+                }
+                "consumeSharedWebsite" -> {
+                    result.success(consumePendingSharedWebsite())
                 }
                 "isUsageAccessEnabled" -> {
                     result.success(isUsageAccessEnabled())
@@ -128,6 +140,15 @@ open class MainActivity : FlutterActivity() {
                         )
                     } else {
                         setBlockedWebsites(blockedWebsites)
+                        result.success(null)
+                    }
+                }
+                "openWebsite" -> {
+                    val url = call.argument<String>("url")
+                    if (url.isNullOrBlank()) {
+                        result.error("missing_url", "url is required", null)
+                    } else {
+                        openWebsite(url)
                         result.success(null)
                     }
                 }
@@ -212,6 +233,29 @@ open class MainActivity : FlutterActivity() {
                 .apply()
         }
         return shouldShow
+    }
+
+    private fun handleIncomingShareIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+            ?: intent.getStringExtra(Intent.EXTRA_SUBJECT)
+            ?: return
+        if (sharedText.isBlank()) return
+        getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(PENDING_SHARED_WEBSITE_PREF_KEY, sharedText)
+            .apply()
+    }
+
+    private fun consumePendingSharedWebsite(): String? {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        val sharedWebsite = prefs.getString(PENDING_SHARED_WEBSITE_PREF_KEY, null)
+        if (!sharedWebsite.isNullOrBlank()) {
+            prefs.edit()
+                .remove(PENDING_SHARED_WEBSITE_PREF_KEY)
+                .apply()
+        }
+        return sharedWebsite
     }
 
     private fun isUsageAccessEnabled(): Boolean {
@@ -527,6 +571,14 @@ open class MainActivity : FlutterActivity() {
                 },
             )
         }
+    }
+
+    private fun openWebsite(url: String) {
+        startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+            },
+        )
     }
 
     private fun getTrackedBlockSettingKeys(): List<String> {
