@@ -67,6 +67,14 @@
             android:launchMode="singleTask"
             android:noHistory="true"
             android:theme="@style/PromptTheme" />
+        <activity
+            android:name=".DailyLimitReachedActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:finishOnTaskLaunch="true"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:theme="@style/PromptTheme" />
         <service
             android:name=".AppGuardAccessibilityService"
             android:exported="false"

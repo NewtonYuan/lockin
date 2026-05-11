@@ -46,13 +46,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
         val previousPackageName = lastForegroundPackage
         val packageChanged = previousPackageName != packageName
         if (previousPackageName != null && previousPackageName != packageName) {
-            if (
-                previousPackageName == pauseOnOpenAllowedPackageName &&
-                packageName != this.packageName
-            ) {
-                pauseOnOpenAllowedPackageName = null
-            }
-            temporarilyAllowedWebsiteDomainsByPackage.remove(previousPackageName)
             lastVisibleBlockedWebsiteByPackage.remove(previousPackageName)
         }
         if (packageName != lastForegroundPackage) {
@@ -76,15 +69,20 @@ class AppGuardAccessibilityService : AccessibilityService() {
             logInstagramEvent(event, eventType)
         }
 
-        if (shouldBlockPackage(packageName)) {
-            enforceHome(packageName)
+        if (isDailyLimitReached(packageName)) {
+            if (System.currentTimeMillis() < promptSuppressedUntilMillis) {
+                enforceHome(packageName)
+                return
+            }
+            if (!promptActive) {
+                openDailyLimitPrompt(packageName)
+            }
             return
         }
 
         val blockedWebsiteDomain = findBlockedWebsiteDomain(packageName)
         if (blockedWebsiteDomain == null) {
             lastVisibleBlockedWebsiteByPackage.remove(packageName)
-            temporarilyAllowedWebsiteDomainsByPackage.remove(packageName)
         } else {
             lastVisibleBlockedWebsiteByPackage[packageName] = blockedWebsiteDomain
             if (
@@ -135,6 +133,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
     }
 
     private fun shouldBlockPackage(packageName: String): Boolean {
+        if (isDailyLimitTemporarilyAllowed(packageName)) return false
         val appLimit = getTrackedAppLimits().firstOrNull { appLimit ->
             appLimit.matches(packageName)
         } ?: return false
@@ -272,7 +271,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         promptActive = true
         showPauseOnOpenActivity(
             sourcePackageName = packageName,
-            appLabel = getPauseOnOpenPromptLabel(packageName),
+            appLabel = getTrackedAppPromptLabel(packageName),
         )
     }
 
@@ -281,6 +280,14 @@ class AppGuardAccessibilityService : AccessibilityService() {
         showWebsiteBlockActivity(
             sourcePackageName = packageName,
             domain = domain,
+        )
+    }
+
+    private fun openDailyLimitPrompt(packageName: String) {
+        promptActive = true
+        showDailyLimitReachedActivity(
+            sourcePackageName = packageName,
+            appLabel = getTrackedAppPromptLabel(packageName),
         )
     }
 
@@ -341,8 +348,18 @@ class AppGuardAccessibilityService : AccessibilityService() {
         if (packageName == this.packageName) return false
         if (packageName == "android") return false
         if (packageName == "com.android.systemui") return false
-        if (packageName == pauseOnOpenAllowedPackageName) return false
+        if (isPauseOnOpenTemporarilyAllowed(packageName)) return false
         return isPauseOnOpenEnabledForPackage(packageName)
+    }
+
+    private fun isPauseOnOpenTemporarilyAllowed(packageName: String): Boolean {
+        val allowedUntil = pauseOnOpenAllowedUntilMillisByPackage[packageName] ?: return false
+        val now = System.currentTimeMillis()
+        if (now >= allowedUntil) {
+            pauseOnOpenAllowedUntilMillisByPackage.remove(packageName)
+            return false
+        }
+        return true
     }
 
     private fun isPauseOnOpenEnabledForPackage(packageName: String): Boolean {
@@ -410,7 +427,32 @@ class AppGuardAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun getPauseOnOpenPromptLabel(packageName: String): String {
+    private fun showDailyLimitReachedActivity(
+        sourcePackageName: String,
+        appLabel: String,
+    ) {
+        enforcementHandler.post {
+            dismissPromptState()
+            promptTarget = TARGET_DAILY_LIMIT
+            promptPackageName = sourcePackageName
+            val intent = Intent(this, DailyLimitReachedActivity::class.java).apply {
+                putExtra(DailyLimitReachedActivity.EXTRA_SOURCE_PACKAGE_NAME, sourcePackageName)
+                putExtra(DailyLimitReachedActivity.EXTRA_APP_LABEL, appLabel)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            runCatching {
+                startActivity(intent)
+                Log.d(PROMPT_DEBUG_TAG, "Showing daily limit activity for package=$sourcePackageName")
+            }.onFailure {
+                Log.e(PROMPT_DEBUG_TAG, "Failed to show daily limit activity", it)
+                dismissPromptState()
+            }
+        }
+    }
+
+    private fun getTrackedAppPromptLabel(packageName: String): String {
         return when {
             packageName == INSTAGRAM_PACKAGE_NAME -> "Instagram"
             isYouTubePackage(packageName) -> "YouTube"
@@ -422,6 +464,20 @@ class AppGuardAccessibilityService : AccessibilityService() {
                     ?: packageName
             }
         }
+    }
+
+    private fun isDailyLimitTemporarilyAllowed(packageName: String): Boolean {
+        val allowedUntil = dailyLimitAllowedUntilMillisByPackage[packageName] ?: return false
+        val now = System.currentTimeMillis()
+        if (now >= allowedUntil) {
+            dailyLimitAllowedUntilMillisByPackage.remove(packageName)
+            return false
+        }
+        return true
+    }
+
+    private fun isDailyLimitReached(packageName: String): Boolean {
+        return shouldBlockPackage(packageName)
     }
 
     private fun isBlockedWebsiteTemporarilyAllowed(
@@ -438,20 +494,46 @@ class AppGuardAccessibilityService : AccessibilityService() {
     }
 
     private fun findBlockedWebsiteDomain(packageName: String): String? {
-        if (!isSupportedBrowserPackage(packageName)) return null
+        val urlFieldIds = browserUrlFieldIdsByPackage[packageName] ?: return null
         val blockedDomains = getBlockedWebsiteDomains()
         if (blockedDomains.isEmpty()) return null
 
         val rootNode = rootInActiveWindow ?: return null
-        val visibleText = buildNodeText(rootNode)
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .lowercase()
-        if (visibleText.isBlank()) return null
+        val visibleUrlText = extractBrowserUrlText(rootNode, urlFieldIds)
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.lowercase()
+            ?: return null
+        if (visibleUrlText.isBlank()) return null
 
         return blockedDomains.firstOrNull { domain ->
-            containsBlockedDomain(visibleText, domain)
+            containsBlockedDomain(visibleUrlText, domain)
         }
+    }
+
+    private fun extractBrowserUrlText(
+        rootNode: AccessibilityNodeInfo,
+        viewIds: List<String>,
+    ): String? {
+        viewIds.forEach { viewId ->
+            val matchingNodes = runCatching {
+                rootNode.findAccessibilityNodeInfosByViewId(viewId)
+            }.getOrNull().orEmpty()
+            matchingNodes.firstOrNull(::isUsableBrowserUrlNode)?.let { node ->
+                return node.text?.toString()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+            }
+        }
+        return null
+    }
+
+    private fun isUsableBrowserUrlNode(node: AccessibilityNodeInfo): Boolean {
+        if (!node.isVisibleToUser) return false
+        if (node.isContentInvalid) return false
+        val text = node.text?.toString()?.trim().orEmpty()
+        val contentDescription = node.contentDescription?.toString()?.trim().orEmpty()
+        return text.isNotBlank() || contentDescription.isNotBlank()
     }
 
     private fun containsBlockedDomain(text: String, domain: String): Boolean {
@@ -680,10 +762,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
             packageName.startsWith(YOUTUBE_REVANCED_PACKAGE_PREFIX)
     }
 
-    private fun isSupportedBrowserPackage(packageName: String): Boolean {
-        return packageName in supportedBrowserPackages
-    }
-
     companion object {
         const val PREFS_NAME = "tempus_app_guard"
         const val CUSTOM_TRACKED_APPS_PREF_KEY = "custom_tracked_apps"
@@ -703,6 +781,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val TARGET_YOUTUBE = "youtube"
         const val TARGET_PAUSE_ON_OPEN = "pause_on_open"
         const val TARGET_WEBSITE = "website"
+        const val TARGET_DAILY_LIMIT = "daily_limit"
         private const val INSTAGRAM_REELS_CONTAINER_VIEW_ID =
             "com.instagram.android:id/clips_video_container"
         private const val YOUTUBE_SHORTS_CONTAINER_VIEW_ID_SUFFIX =
@@ -744,28 +823,62 @@ class AppGuardAccessibilityService : AccessibilityService() {
         @Volatile
         private var promptSuppressedUntilMillis = 0L
 
-        @Volatile
-        private var pauseOnOpenAllowedPackageName: String? = null
+        private val pauseOnOpenAllowedUntilMillisByPackage =
+            ConcurrentHashMap<String, Long>()
+
+        private val dailyLimitAllowedUntilMillisByPackage =
+            ConcurrentHashMap<String, Long>()
 
         private val temporarilyAllowedWebsiteDomainsByPackage =
             ConcurrentHashMap<String, AllowedWebsite>()
 
-        private val supportedBrowserPackages = setOf(
-            "com.android.chrome",
-            "org.chromium.chrome",
-            "com.chrome.beta",
-            "com.chrome.dev",
-            "com.google.android.apps.chrome",
-            "com.sec.android.app.sbrowser",
-            "org.mozilla.firefox",
-            "org.mozilla.focus",
-            "com.brave.browser",
-            "com.duckduckgo.mobile.android",
-            "com.microsoft.emmx",
-            "com.opera.browser",
-            "com.opera.mini.native",
-            "com.vivaldi.browser",
-            "com.kiwibrowser.browser",
+        private val browserUrlFieldIdsByPackage = mapOf(
+            "com.android.chrome" to listOf(
+                "com.android.chrome:id/url_bar",
+            ),
+            "org.chromium.chrome" to listOf(
+                "org.chromium.chrome:id/url_bar",
+            ),
+            "com.chrome.beta" to listOf(
+                "com.chrome.beta:id/url_bar",
+            ),
+            "com.chrome.dev" to listOf(
+                "com.chrome.dev:id/url_bar",
+            ),
+            "com.google.android.apps.chrome" to listOf(
+                "com.google.android.apps.chrome:id/url_bar",
+            ),
+            "com.sec.android.app.sbrowser" to listOf(
+                "com.sec.android.app.sbrowser:id/location_bar_edit_text",
+                "com.sec.android.app.sbrowser:id/custom_tab_toolbar_url_bar_text",
+            ),
+            "org.mozilla.focus" to listOf(
+                "org.mozilla.focus:id/mozac_browser_toolbar_url_view",
+            ),
+            "org.mozilla.firefox" to listOf(
+                "org.mozilla.firefox:id/mozac_browser_toolbar_url_view",
+            ),
+            "com.brave.browser" to listOf(
+                "com.brave.browser:id/url_bar",
+            ),
+            "com.microsoft.emmx" to listOf(
+                "com.microsoft.emmx:id/url_bar",
+            ),
+            "com.opera.browser" to listOf(
+                "com.opera.browser:id/url_field",
+            ),
+            "com.opera.mini.native" to listOf(
+                "com.opera.mini.native:id/url_field",
+            ),
+            "com.vivaldi.browser" to listOf(
+                "com.vivaldi.browser:id/url_bar",
+            ),
+            "com.kiwibrowser.browser" to listOf(
+                "com.kiwibrowser.browser:id/url_bar",
+            ),
+            "com.instagram.android" to listOf(
+                "com.instagram.android:id/ig_browser_text_subtitle",
+            ),
         )
 
         fun dismissPrompt() {
@@ -839,9 +952,30 @@ class AppGuardAccessibilityService : AccessibilityService() {
             }
         }
 
-        fun allowPauseOnOpen(packageName: String?) {
-            if (packageName.isNullOrBlank()) return
-            pauseOnOpenAllowedPackageName = packageName
+        fun allowPauseOnOpen(packageName: String?, minutes: Int) {
+            if (packageName.isNullOrBlank() || minutes <= 0) return
+            pauseOnOpenAllowedUntilMillisByPackage[packageName] =
+                System.currentTimeMillis() + minutes * 60L * 1000L
+            promptSuppressedUntilMillis = System.currentTimeMillis() + PROMPT_SUPPRESSION_MILLIS
+            activeService?.dismissPromptOverlay() ?: run {
+                promptActive = false
+            }
+        }
+
+        fun closeDailyLimitTarget() {
+            promptSuppressedUntilMillis = System.currentTimeMillis() + PROMPT_SUPPRESSION_MILLIS
+            activeService?.enforcementHandler?.postDelayed(
+                {
+                    activeService?.goHome()
+                },
+                150L,
+            )
+        }
+
+        fun allowDailyLimitForMinutes(packageName: String?, minutes: Int) {
+            if (packageName.isNullOrBlank() || minutes <= 0) return
+            dailyLimitAllowedUntilMillisByPackage[packageName] =
+                System.currentTimeMillis() + minutes * 60L * 1000L
             promptSuppressedUntilMillis = System.currentTimeMillis() + PROMPT_SUPPRESSION_MILLIS
             activeService?.dismissPromptOverlay() ?: run {
                 promptActive = false

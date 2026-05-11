@@ -54,7 +54,7 @@ class WebsiteBlockActivity : Activity() {
                     TextView(context).apply {
                         text = blockedTitle(domain)
                         setTextColor(Color.rgb(17, 24, 39))
-                        textSize = 34f
+                        textSize = 30f
                         gravity = Gravity.CENTER
                         setTypeface(typeface, Typeface.BOLD)
                     },
@@ -77,7 +77,7 @@ class WebsiteBlockActivity : Activity() {
                             finish()
                         }
                     },
-                    buttonLayoutParams(topMargin = dp(28)),
+                    buttonLayoutParams(topMargin = dp(40)),
                 )
 
                 addView(
@@ -97,11 +97,29 @@ class WebsiteBlockActivity : Activity() {
                     },
                     buttonLayoutParams(topMargin = dp(10)),
                 )
+
+                addView(
+                    TextView(context).apply {
+                        text = "This will affect your daily streak"
+                        setTextColor(Color.rgb(95, 107, 122))
+                        textSize = 11f
+                        gravity = Gravity.CENTER
+                        setPadding(0, dp(6), 0, 0)
+                    },
+                    matchWidthLayoutParams(),
+                )
             })
         }
     }
 
     private fun createMinutesView(): FrameLayout {
+        val picker = DurationWheelPicker(
+            context = this,
+            values = minuteOptions,
+            initialValue = 1,
+            labelBuilder = ::durationLabel,
+        )
+
         return promptFrame().apply {
             addView(promptPanel().apply {
                 addView(
@@ -111,7 +129,7 @@ class WebsiteBlockActivity : Activity() {
 
                 addView(
                     TextView(context).apply {
-                        text = "How many minutes?"
+                        text = "For how long?"
                         setTextColor(Color.rgb(17, 24, 39))
                         textSize = 34f
                         gravity = Gravity.CENTER
@@ -120,29 +138,67 @@ class WebsiteBlockActivity : Activity() {
                     matchWidthLayoutParams(),
                 )
 
-                minuteOptions.forEach { minutes ->
-                    addView(
-                        Button(context).apply {
-                            text = durationLabel(minutes)
-                            setTextColor(Color.WHITE)
-                            background = prominentRippleBackground()
-                            setAllCaps(false)
-                            textSize = 18f
-                            setTypeface(typeface, Typeface.BOLD)
-                            minHeight = dp(48)
-                            setPadding(dp(16), 0, dp(16), 0)
-                            setOnClickListener {
-                                AppGuardAccessibilityService.allowWebsiteForMinutes(
-                                    sourcePackageName,
-                                    domain,
-                                    minutes,
-                                )
-                                finish()
-                            }
-                        },
-                        buttonLayoutParams(topMargin = dp(8)),
-                    )
-                }
+                addView(
+                    FrameLayout(context).apply {
+                        addView(
+                            picker.view,
+                            FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                picker.heightPx,
+                                Gravity.CENTER,
+                            ),
+                        )
+                    },
+                    LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                    ).apply {
+                        topMargin = dp(20)
+                        bottomMargin = dp(20)
+                    },
+                )
+
+                addView(
+                    Button(context).apply {
+                        text = "Continue"
+                        setTextColor(Color.WHITE)
+                        background = prominentRippleBackground()
+                        setAllCaps(false)
+                        textSize = 18f
+                        setTypeface(typeface, Typeface.BOLD)
+                        minHeight = dp(48)
+                        setPadding(dp(16), 0, dp(16), 0)
+                        setOnClickListener {
+                            AppGuardAccessibilityService.allowWebsiteForMinutes(
+                                sourcePackageName,
+                                domain,
+                                picker.selectedValue(),
+                            )
+                            finish()
+                        }
+                    },
+                    buttonLayoutParams(),
+                )
+
+                addView(
+                    Button(context).apply {
+                        text = "Nevermind"
+                        setTextColor(BRAND)
+                        textSize = 16f
+                        gravity = Gravity.CENTER
+                        setTypeface(typeface, Typeface.BOLD)
+                        background = outlinedRippleBackground()
+                        minHeight = dp(48)
+                        setAllCaps(false)
+                        setPadding(dp(16), 0, dp(16), 0)
+                        setOnClickListener {
+                            AppGuardAccessibilityService.dismissPrompt()
+                            AppGuardAccessibilityService.closeBlockedWebsiteTarget()
+                            finish()
+                        }
+                    },
+                    buttonLayoutParams(topMargin = dp(10)),
+                )
             })
         }
     }
@@ -162,14 +218,15 @@ class WebsiteBlockActivity : Activity() {
 
     override fun finish() {
         val content = window.decorView.findViewById<ViewGroup>(android.R.id.content)
-        val root = content.getChildAt(0)
-        if (root == null) {
+        val root = content.getChildAt(0) as? ViewGroup
+        val panel = root?.findViewWithTag<View>(PROMPT_PANEL_TAG)
+        if (root == null || panel == null) {
             super.finish()
             overridePendingTransition(R.anim.prompt_fade_in, R.anim.prompt_fade_out)
             return
         }
 
-        root.animate()
+        panel.animate()
             .alpha(0f)
             .setDuration(110L)
             .withEndAction {
@@ -180,9 +237,10 @@ class WebsiteBlockActivity : Activity() {
     }
 
     private fun setPromptContent(view: View) {
-        view.alpha = 0f
         setContentView(view)
-        view.animate()
+        val panel = (view as? ViewGroup)?.findViewWithTag<View>(PROMPT_PANEL_TAG) ?: view
+        panel.alpha = 0f
+        panel.animate()
             .alpha(1f)
             .setDuration(140L)
             .start()
@@ -207,7 +265,7 @@ class WebsiteBlockActivity : Activity() {
     private fun logoLayoutParams(): LinearLayout.LayoutParams {
         return LinearLayout.LayoutParams(dp(84), dp(84)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            bottomMargin = dp(18)
+            bottomMargin = dp(12)
         }
     }
 
@@ -225,6 +283,7 @@ class WebsiteBlockActivity : Activity() {
 
     private fun promptPanel(): LinearLayout {
         return LinearLayout(this).apply {
+            tag = PROMPT_PANEL_TAG
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(24), dp(48), dp(24), dp(48))
@@ -305,5 +364,6 @@ class WebsiteBlockActivity : Activity() {
         const val EXTRA_DOMAIN = "domain"
         const val BRAND = 0xFF00688F.toInt()
         const val BRAND_PRESSED = 0xFF00A6D6.toInt()
+        private const val PROMPT_PANEL_TAG = "prompt_panel"
     }
 }
