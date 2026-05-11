@@ -29,6 +29,7 @@ open class MainActivity : FlutterActivity() {
     companion object {
         const val ACCESSIBILITY_CHANNEL_NAME = "tempus/accessibility"
         private const val PENDING_SHARED_WEBSITE_PREF_KEY = "pending_shared_website"
+        private const val ONBOARDING_COMPLETED_PREF_KEY = "onboarding_completed"
     }
 
     private val scrollDayStatusesPrefKey = "scroll_day_statuses"
@@ -85,6 +86,18 @@ open class MainActivity : FlutterActivity() {
                 }
                 "consumeSharedWebsite" -> {
                     result.success(consumePendingSharedWebsite())
+                }
+                "getOnboardingCompleted" -> {
+                    result.success(getOnboardingCompleted())
+                }
+                "setOnboardingCompleted" -> {
+                    val completed = call.argument<Boolean>("completed")
+                    if (completed == null) {
+                        result.error("missing_onboarding_completed", "completed is required", null)
+                    } else {
+                        setOnboardingCompleted(completed)
+                        result.success(null)
+                    }
                 }
                 "isUsageAccessEnabled" -> {
                     result.success(isUsageAccessEnabled())
@@ -256,6 +269,18 @@ open class MainActivity : FlutterActivity() {
                 .apply()
         }
         return sharedWebsite
+    }
+
+    private fun getOnboardingCompleted(): Boolean {
+        return getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(ONBOARDING_COMPLETED_PREF_KEY, false)
+    }
+
+    private fun setOnboardingCompleted(completed: Boolean) {
+        getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(ONBOARDING_COMPLETED_PREF_KEY, completed)
+            .apply()
     }
 
     private fun isUsageAccessEnabled(): Boolean {

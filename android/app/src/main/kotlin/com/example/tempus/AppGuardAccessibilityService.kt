@@ -64,11 +64,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
                 dismissPromptOverlay()
             }
         }
-
-        if (packageName == INSTAGRAM_PACKAGE_NAME && INSTAGRAM_DEBUG_LOGS_ENABLED) {
-            logInstagramEvent(event, eventType)
-        }
-
         if (isDailyLimitReached(packageName)) {
             if (System.currentTimeMillis() < promptSuppressedUntilMillis) {
                 enforceHome(packageName)
@@ -155,6 +150,11 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private fun isInstagramStoriesBlockingEnabled(): Boolean {
         return getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(INSTAGRAM_STORIES_SETTING_KEY, false)
+    }
+
+    private fun isInstagramReelsDmsAllowed(): Boolean {
+        return getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(INSTAGRAM_REELS_DMS_SETTING_KEY, false)
     }
 
     private fun isYouTubeShortsBlockingEnabled(): Boolean {
@@ -576,6 +576,9 @@ class AppGuardAccessibilityService : AccessibilityService() {
                     eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) &&
                 isInstagramReelsScreen()
             ) {
+                if (isInstagramReelsDmsAllowed() && isInstagramDmThreadContext()) {
+                    return false
+                }
                 return true
             }
         }
@@ -636,6 +639,18 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private fun clearInstagramReelsDetectionCache() {
         lastInstagramReelsScanAtMillis = 0L
         instagramReelsDetectedUntilMillis = 0L
+    }
+
+    private fun isInstagramDmThreadContext(): Boolean {
+        val rootNode = rootInActiveWindow ?: return false
+        return instagramDmThreadViewIds.any { viewId ->
+            val nodes = rootNode.findAccessibilityNodeInfosByViewId(viewId) ?: return@any false
+            nodes.any { node ->
+                node?.isVisibleToUser == true &&
+                    !node.isContentInvalid &&
+                    node.viewIdResourceName == viewId
+            }
+        }
     }
 
     private fun isYouTubeShortsScreen(packageName: String): Boolean {
@@ -702,31 +717,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
         return rootText.startsWith("Send message or reaction", ignoreCase = true)
     }
 
-    private fun logInstagramEvent(event: AccessibilityEvent, eventType: Int) {
-        logDebugEvent(INSTAGRAM_DEBUG_TAG, event, eventType)
-    }
-
-    private fun logDebugEvent(
-        tag: String,
-        event: AccessibilityEvent,
-        eventType: Int,
-        prefix: String = "",
-    ) {
-        val clickLabel = buildString {
-            event.text.forEach { append(' ').append(it) }
-            append(' ').append(event.contentDescription?.toString().orEmpty())
-        }.trim().ifBlank { "-" }
-        val rootSummary = rootInActiveWindow?.let(::buildNodeText)
-            ?.replace(Regex("\\s+"), " ")
-            ?.trim()
-            ?.ifBlank { "-" }
-            ?: "-"
-        Log.d(
-            tag,
-            "${prefix}event=${eventTypeName(eventType)} clickLabel=\"$clickLabel\" root=\"$rootSummary\"",
-        )
-    }
-
     private fun buildNodeText(node: AccessibilityNodeInfo): String {
         val collectedText = StringBuilder()
         collectNodeText(node, collectedText)
@@ -748,15 +738,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun eventTypeName(eventType: Int): String {
-        return when (eventType) {
-            AccessibilityEvent.TYPE_VIEW_CLICKED -> "TYPE_VIEW_CLICKED"
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "TYPE_WINDOW_STATE_CHANGED"
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "TYPE_WINDOW_CONTENT_CHANGED"
-            else -> eventType.toString()
-        }
-    }
-
     private fun isYouTubePackage(packageName: String): Boolean {
         return packageName == YOUTUBE_PACKAGE_NAME ||
             packageName.startsWith(YOUTUBE_REVANCED_PACKAGE_PREFIX)
@@ -773,6 +754,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val YOUTUBE_PACKAGE_NAME = "com.google.android.youtube"
         const val YOUTUBE_REVANCED_PACKAGE_PREFIX = "app.revanced.android.youtube"
         const val INSTAGRAM_REELS_SETTING_KEY = "instagram_reels"
+        const val INSTAGRAM_REELS_DMS_SETTING_KEY = "instagram_reels_dms"
         const val INSTAGRAM_PAUSE_ON_OPEN_SETTING_KEY = "instagram_pause_on_open"
         const val INSTAGRAM_STORIES_SETTING_KEY = "instagram_explore"
         const val YOUTUBE_PAUSE_ON_OPEN_SETTING_KEY = "youtube_pause_on_open"
@@ -784,14 +766,16 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val TARGET_DAILY_LIMIT = "daily_limit"
         private const val INSTAGRAM_REELS_CONTAINER_VIEW_ID =
             "com.instagram.android:id/clips_video_container"
+        private val instagramDmThreadViewIds = listOf(
+            "com.instagram.android:id/direct_thread_header",
+            "com.instagram.android:id/reply_bar_edittext",
+        )
         private const val YOUTUBE_SHORTS_CONTAINER_VIEW_ID_SUFFIX =
             "id/reel_player_underlay"
-        private const val INSTAGRAM_DEBUG_TAG = "TempusInstagramDebug"
         private const val PROMPT_DEBUG_TAG = "TempusPromptOverlay"
         private const val BLOCK_RETRY_COUNT = 6
         private const val BLOCK_RETRY_DELAY_MS = 250L
         private const val PROMPT_SUPPRESSION_MILLIS = 800L
-        private const val INSTAGRAM_DEBUG_LOGS_ENABLED = false
         private const val INSTAGRAM_REELS_SCAN_DEBOUNCE_MILLIS = 250L
         private const val INSTAGRAM_REELS_DETECTION_CACHE_MILLIS = 1200L
         private const val YOUTUBE_SHORTS_SCAN_DEBOUNCE_MILLIS = 250L

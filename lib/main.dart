@@ -93,6 +93,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool? _isUsageAccessEnabled;
   bool _bypassAccessibilityGate = false;
   bool _hasCompletedOnboarding = false;
+  bool _hasLoadedOnboardingState = false;
   OnboardingStep _onboardingStep = OnboardingStep.intro;
   DateTime _trackerMonth = DateTime(DateTime.now().year, DateTime.now().month);
   DateTime _appInstalledOn = DateTime.now();
@@ -124,6 +125,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _refreshAccessibilityStatus();
     _refreshUsageAccessStatus();
+    _loadOnboardingState();
     _loadSavedBlockConfig();
     _refreshInstalledTrackedPackages();
     _refreshUsageStats();
@@ -416,6 +418,44 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 },
               )
               .toList(),
+        },
+      );
+    } on PlatformException {
+      // Android-only persistence. Other platforms keep local UI state only.
+    } on MissingPluginException {
+      // Android-only persistence. Other platforms keep local UI state only.
+    }
+  }
+
+  Future<void> _loadOnboardingState() async {
+    try {
+      final completed = await _accessibilityChannel.invokeMethod<bool>(
+        'getOnboardingCompleted',
+      );
+      if (!mounted) return;
+      setState(() {
+        _hasCompletedOnboarding = completed ?? false;
+        _hasLoadedOnboardingState = true;
+      });
+    } on PlatformException {
+      if (!mounted) return;
+      setState(() {
+        _hasLoadedOnboardingState = true;
+      });
+    } on MissingPluginException {
+      if (!mounted) return;
+      setState(() {
+        _hasLoadedOnboardingState = true;
+      });
+    }
+  }
+
+  Future<void> _setOnboardingCompleted(bool completed) async {
+    try {
+      await _accessibilityChannel.invokeMethod<void>(
+        'setOnboardingCompleted',
+        {
+          'completed': completed,
         },
       );
     } on PlatformException {
@@ -1031,6 +1071,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             _onboardingStep = OnboardingStep.intro;
             _selectedIndex = 0;
           });
+          _setOnboardingCompleted(false);
           _pageController.jumpToPage(0);
           _refreshAccessibilityStatus();
           _refreshUsageAccessStatus();
@@ -1043,6 +1084,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    if (!_hasLoadedOnboardingState) {
+      return const Scaffold(
+        backgroundColor: appBackground,
+        body: SizedBox.expand(),
+      );
+    }
+
     if (!_hasCompletedOnboarding && !_bypassAccessibilityGate) {
       final displayedStep = _effectiveOnboardingStep();
 
@@ -1072,6 +1120,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           setState(() {
             _hasCompletedOnboarding = true;
           });
+          _setOnboardingCompleted(true);
         },
       );
     }

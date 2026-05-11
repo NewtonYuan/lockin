@@ -12,6 +12,7 @@
 .swiftpm/
 migrate_working_dir/
 decoded_ascent/
+decoded_scrollguard/
 
 # IntelliJ related
 *.iml
