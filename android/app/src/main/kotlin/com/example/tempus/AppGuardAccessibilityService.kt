@@ -1,6 +1,7 @@
 package com.prestige.tempus
 
 import android.accessibilityservice.AccessibilityService
+import android.app.AppOpsManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
@@ -8,6 +9,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -18,6 +20,22 @@ import org.json.JSONArray
 class AppGuardAccessibilityService : AccessibilityService() {
     private var lastForegroundPackage: String? = null
     private val enforcementHandler = Handler(Looper.getMainLooper())
+    private val usageAccessEnableWatcher = object : Runnable {
+        override fun run() {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val awaitingEnable = prefs.getBoolean(AWAITING_USAGE_ACCESS_ENABLE_PREF_KEY, false)
+            if (!awaitingEnable) return
+            if (isUsageAccessEnabled()) {
+                prefs.edit()
+                    .putBoolean(AWAITING_USAGE_ACCESS_ENABLE_PREF_KEY, false)
+                    .putBoolean(USAGE_ACCESS_ENABLED_SUCCESS_PREF_KEY, true)
+                    .apply()
+                relaunchAppToForeground()
+                return
+            }
+            enforcementHandler.postDelayed(this, USAGE_ACCESS_WATCH_INTERVAL_MILLIS)
+        }
+    }
     private var promptTarget: String? = null
     private var promptPackageName: String? = null
     private var lastInstagramReelsScanAtMillis = 0L
@@ -29,6 +47,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         activeService = this
         handleAccessibilityEnabledReturn()
+        startUsageAccessEnableWatcherIfNeeded()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -112,6 +131,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         if (activeService === this) {
             activeService = null
         }
+        enforcementHandler.removeCallbacks(usageAccessEnableWatcher)
         enforcementHandler.removeCallbacksAndMessages(null)
         dismissPromptState()
         super.onDestroy()
@@ -750,6 +770,8 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val TEN_SECOND_LIMIT_VALUE = -10
         const val AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY = "awaiting_accessibility_enable"
         const val ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY = "accessibility_enabled_success"
+        const val AWAITING_USAGE_ACCESS_ENABLE_PREF_KEY = "awaiting_usage_access_enable"
+        const val USAGE_ACCESS_ENABLED_SUCCESS_PREF_KEY = "usage_access_enabled_success"
         const val INSTAGRAM_PACKAGE_NAME = "com.instagram.android"
         const val YOUTUBE_PACKAGE_NAME = "com.google.android.youtube"
         const val YOUTUBE_REVANCED_PACKAGE_PREFIX = "app.revanced.android.youtube"
@@ -776,6 +798,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         private const val BLOCK_RETRY_COUNT = 6
         private const val BLOCK_RETRY_DELAY_MS = 250L
         private const val PROMPT_SUPPRESSION_MILLIS = 800L
+        private const val USAGE_ACCESS_WATCH_INTERVAL_MILLIS = 500L
         private const val INSTAGRAM_REELS_SCAN_DEBOUNCE_MILLIS = 250L
         private const val INSTAGRAM_REELS_DETECTION_CACHE_MILLIS = 1200L
         private const val YOUTUBE_SHORTS_SCAN_DEBOUNCE_MILLIS = 250L
@@ -965,6 +988,10 @@ class AppGuardAccessibilityService : AccessibilityService() {
                 promptActive = false
             }
         }
+
+        fun beginUsageAccessEnableWatch() {
+            activeService?.startUsageAccessEnableWatcherIfNeeded()
+        }
     }
 
     private fun getTrackedAppLimits(): List<AppLimit> {
@@ -1014,6 +1041,28 @@ class AppGuardAccessibilityService : AccessibilityService() {
             .putBoolean(ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY, true)
             .apply()
 
+        relaunchAppToForeground()
+    }
+
+    private fun startUsageAccessEnableWatcherIfNeeded() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val awaitingEnable = prefs.getBoolean(AWAITING_USAGE_ACCESS_ENABLE_PREF_KEY, false)
+        if (!awaitingEnable) return
+        enforcementHandler.removeCallbacks(usageAccessEnableWatcher)
+        enforcementHandler.post(usageAccessEnableWatcher)
+    }
+
+    private fun isUsageAccessEnabled(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = appOps.checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            packageName,
+        )
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun relaunchAppToForeground() {
         val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -1023,7 +1072,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         runCatching {
             startActivity(intent)
         }.onFailure {
-            Log.e(PROMPT_DEBUG_TAG, "Failed to relaunch app after accessibility enable", it)
+            Log.e(PROMPT_DEBUG_TAG, "Failed to relaunch app after permission enable", it)
         }
     }
 }

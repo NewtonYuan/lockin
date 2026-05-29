@@ -75,6 +75,7 @@ open class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 "openUsageAccessSettings" -> {
+                    markAwaitingUsageAccessEnable()
                     startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
                     result.success(null)
                 }
@@ -83,6 +84,9 @@ open class MainActivity : FlutterActivity() {
                 }
                 "consumeAccessibilityEnabledSuccess" -> {
                     result.success(consumeAccessibilityEnabledSuccess())
+                }
+                "consumeUsageAccessEnabledSuccess" -> {
+                    result.success(consumeUsageAccessEnabledSuccess())
                 }
                 "consumeSharedWebsite" -> {
                     result.success(consumePendingSharedWebsite())
@@ -243,6 +247,28 @@ open class MainActivity : FlutterActivity() {
         if (shouldShow) {
             prefs.edit()
                 .putBoolean(AppGuardAccessibilityService.ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY, false)
+                .apply()
+        }
+        return shouldShow
+    }
+
+    private fun markAwaitingUsageAccessEnable() {
+        getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(AppGuardAccessibilityService.AWAITING_USAGE_ACCESS_ENABLE_PREF_KEY, true)
+            .apply()
+        AppGuardAccessibilityService.beginUsageAccessEnableWatch()
+    }
+
+    private fun consumeUsageAccessEnabledSuccess(): Boolean {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        val shouldShow = prefs.getBoolean(
+            AppGuardAccessibilityService.USAGE_ACCESS_ENABLED_SUCCESS_PREF_KEY,
+            false,
+        )
+        if (shouldShow) {
+            prefs.edit()
+                .putBoolean(AppGuardAccessibilityService.USAGE_ACCESS_ENABLED_SUCCESS_PREF_KEY, false)
                 .apply()
         }
         return shouldShow

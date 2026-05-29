@@ -8,6 +8,7 @@ import 'tabs/block_tab.dart';
 import 'tabs/home_tab.dart';
 import 'tabs/settings_tab.dart';
 import 'tabs/statistics_tab.dart';
+import 'widgets/days_tracker_calendar.dart';
 
 void main() {
   runApp(const MyApp());
@@ -165,7 +166,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         if (_isAccessibilityEnabled == true) {
           _bypassAccessibilityGate = false;
           if (previousValue == false) {
-            _onboardingStep = OnboardingStep.accessibilityEnabled;
+            _onboardingStep = OnboardingStep.trackDays;
           }
         }
       });
@@ -190,7 +191,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       );
       if (!mounted || shouldShow != true) return;
       setState(() {
-        _onboardingStep = OnboardingStep.accessibilityEnabled;
+        _onboardingStep = OnboardingStep.trackDays;
       });
     } on PlatformException {
       // Android-only setup flow. Other platforms ignore this.
@@ -213,9 +214,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _openUsageAccessSettings() async {
     try {
-      await _accessibilityChannel.invokeMethod<void>(
-        'openUsageAccessSettings',
-      );
+      await _accessibilityChannel.invokeMethod<void>('openUsageAccessSettings');
     } on PlatformException {
       // Android-only setup. Other platforms can still render the app shell.
     } on MissingPluginException {
@@ -237,6 +236,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _onboardingStep = OnboardingStep.allDone;
         }
       });
+      await _consumeUsageAccessEnabledSuccess();
     } on PlatformException {
       if (!mounted) return;
       setState(() {
@@ -276,9 +276,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _loadSavedBlockConfig() async {
     try {
-      final savedConfig = await _accessibilityChannel.invokeMapMethod<String, dynamic>(
-        'getSavedBlockConfig',
-      );
+      final savedConfig = await _accessibilityChannel
+          .invokeMapMethod<String, dynamic>('getSavedBlockConfig');
       if (!mounted || savedConfig == null) return;
 
       final rawDailyTimeLimits =
@@ -297,7 +296,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _customTrackedApps = rawCustomTrackedApps
               .whereType<Map>()
               .map(CustomTrackedApp.fromMap)
-              .where((entry) => entry.appName.isNotEmpty && entry.packageName.isNotEmpty)
+              .where(
+                (entry) =>
+                    entry.appName.isNotEmpty && entry.packageName.isNotEmpty,
+              )
               .toList();
 
           for (final app in _customTrackedApps) {
@@ -335,14 +337,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _scrollDayStatuses
             ..clear()
             ..addEntries(
-              rawScrollDayStatuses.entries.map((entry) {
-                final key = entry.key;
-                final value = entry.value;
-                if (key is! String || value is! int) {
-                  return const MapEntry('', ScrollDayStatus.scrolled);
-                }
-                return MapEntry(key, _scrollDayStatusFromInt(value));
-              }).where((entry) => entry.key.isNotEmpty),
+              rawScrollDayStatuses.entries
+                  .map((entry) {
+                    final key = entry.key;
+                    final value = entry.value;
+                    if (key is! String || value is! int) {
+                      return const MapEntry('', ScrollDayStatus.scrolled);
+                    }
+                    return MapEntry(key, _scrollDayStatusFromInt(value));
+                  })
+                  .where((entry) => entry.key.isNotEmpty),
             );
         }
 
@@ -350,18 +354,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _blockedWebsites
             ..clear()
             ..addAll(
-              rawBlockedWebsites.whereType<Map>().map((entry) {
-                final domain = entry['domain'] as String? ?? '';
-                final blockedSince = entry['blockedSince'];
-                final blockedSinceMillis =
-                    blockedSince is int ? blockedSince : 0;
-                return BlockedWebsiteEntry(
-                  domain: domain,
-                  blockedSince: DateTime.fromMillisecondsSinceEpoch(
-                    blockedSinceMillis,
-                  ),
-                );
-              }).where((entry) => entry.domain.isNotEmpty),
+              rawBlockedWebsites
+                  .whereType<Map>()
+                  .map((entry) {
+                    final domain = entry['domain'] as String? ?? '';
+                    final blockedSince = entry['blockedSince'];
+                    final blockedSinceMillis = blockedSince is int
+                        ? blockedSince
+                        : 0;
+                    return BlockedWebsiteEntry(
+                      domain: domain,
+                      blockedSince: DateTime.fromMillisecondsSinceEpoch(
+                        blockedSinceMillis,
+                      ),
+                    );
+                  })
+                  .where((entry) => entry.domain.isNotEmpty),
             );
         }
       });
@@ -375,13 +383,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _setNativeDailyTimeLimit(String settingKey, int? minutes) async {
     try {
-      await _accessibilityChannel.invokeMethod<void>(
-        'setDailyTimeLimit',
-        {
-          'settingKey': settingKey,
-          'minutes': minutes,
-        },
-      );
+      await _accessibilityChannel.invokeMethod<void>('setDailyTimeLimit', {
+        'settingKey': settingKey,
+        'minutes': minutes,
+      });
     } on PlatformException {
       // Android-only enforcement. Other platforms keep local UI state only.
     } on MissingPluginException {
@@ -391,13 +396,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _setNativeBlockSetting(String settingKey, bool value) async {
     try {
-      await _accessibilityChannel.invokeMethod<void>(
-        'setBlockSetting',
-        {
-          'settingKey': settingKey,
-          'value': value,
-        },
-      );
+      await _accessibilityChannel.invokeMethod<void>('setBlockSetting', {
+        'settingKey': settingKey,
+        'value': value,
+      });
     } on PlatformException {
       // Android-only enforcement. Other platforms keep local UI state only.
     } on MissingPluginException {
@@ -407,23 +409,36 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _persistBlockedWebsites() async {
     try {
-      await _accessibilityChannel.invokeMethod<void>(
-        'setBlockedWebsites',
-        {
-          'blockedWebsites': _blockedWebsites
-              .map(
-                (entry) => {
-                  'domain': entry.domain,
-                  'blockedSince': entry.blockedSince.millisecondsSinceEpoch,
-                },
-              )
-              .toList(),
-        },
-      );
+      await _accessibilityChannel.invokeMethod<void>('setBlockedWebsites', {
+        'blockedWebsites': _blockedWebsites
+            .map(
+              (entry) => {
+                'domain': entry.domain,
+                'blockedSince': entry.blockedSince.millisecondsSinceEpoch,
+              },
+            )
+            .toList(),
+      });
     } on PlatformException {
       // Android-only persistence. Other platforms keep local UI state only.
     } on MissingPluginException {
       // Android-only persistence. Other platforms keep local UI state only.
+    }
+  }
+
+  Future<void> _consumeUsageAccessEnabledSuccess() async {
+    try {
+      final shouldShow = await _accessibilityChannel.invokeMethod<bool>(
+        'consumeUsageAccessEnabledSuccess',
+      );
+      if (!mounted || shouldShow != true) return;
+      setState(() {
+        _onboardingStep = OnboardingStep.allDone;
+      });
+    } on PlatformException {
+      // Android-only setup flow. Other platforms ignore this.
+    } on MissingPluginException {
+      // Android-only setup flow. Other platforms ignore this.
     }
   }
 
@@ -452,12 +467,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _setOnboardingCompleted(bool completed) async {
     try {
-      await _accessibilityChannel.invokeMethod<void>(
-        'setOnboardingCompleted',
-        {
-          'completed': completed,
-        },
-      );
+      await _accessibilityChannel.invokeMethod<void>('setOnboardingCompleted', {
+        'completed': completed,
+      });
     } on PlatformException {
       // Android-only persistence. Other platforms keep local UI state only.
     } on MissingPluginException {
@@ -470,12 +482,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (normalizedDomain.isEmpty) return;
     final url = 'https://$normalizedDomain';
     try {
-      await _accessibilityChannel.invokeMethod<void>(
-        'openWebsite',
-        {
-          'url': url,
-        },
-      );
+      await _accessibilityChannel.invokeMethod<void>('openWebsite', {
+        'url': url,
+      });
     } on PlatformException {
       // Android-only launch path. Other platforms ignore for now.
     } on MissingPluginException {
@@ -510,7 +519,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       },
     );
 
-    final existingEntry = _blockedWebsites.cast<BlockedWebsiteEntry?>().firstWhere(
+    final existingEntry = _blockedWebsites
+        .cast<BlockedWebsiteEntry?>()
+        .firstWhere(
           (entry) => entry?.domain.toLowerCase() == website.toLowerCase(),
           orElse: () => null,
         );
@@ -525,10 +536,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             surfaceTintColor: Colors.transparent,
             title: const Text(
               'Do you really need this?',
-              style: TextStyle(
-                color: appText,
-                fontWeight: FontWeight.w700,
-              ),
+              style: TextStyle(color: appText, fontWeight: FontWeight.w700),
             ),
             content: Text(
               existingEntry.domain,
@@ -565,10 +573,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           surfaceTintColor: Colors.transparent,
           title: const Text(
             'Add blocked website?',
-            style: TextStyle(
-              color: appText,
-              fontWeight: FontWeight.w700,
-            ),
+            style: TextStyle(color: appText, fontWeight: FontWeight.w700),
           ),
           content: Text(
             website,
@@ -597,14 +602,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _persistCustomTrackedApps() async {
     try {
-      await _accessibilityChannel.invokeMethod<void>(
-        'setCustomTrackedApps',
-        {
-          'customTrackedApps': _customTrackedApps
-              .map((app) => app.toMap())
-              .toList(),
-        },
-      );
+      await _accessibilityChannel.invokeMethod<void>('setCustomTrackedApps', {
+        'customTrackedApps': _customTrackedApps
+            .map((app) => app.toMap())
+            .toList(),
+      });
     } on PlatformException {
       // Android-only persistence. Other platforms keep local UI state only.
     } on MissingPluginException {
@@ -615,13 +617,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _persistTodayScrollStatus(ScrollDayStatus status) async {
     final dateKey = _dateKey(DateTime.now());
     try {
-      await _accessibilityChannel.invokeMethod<void>(
-        'setScrollDayStatus',
-        {
-          'dateKey': dateKey,
-          'status': _scrollDayStatusToInt(status),
-        },
-      );
+      await _accessibilityChannel.invokeMethod<void>('setScrollDayStatus', {
+        'dateKey': dateKey,
+        'status': _scrollDayStatusToInt(status),
+      });
     } on PlatformException {
       // Android-only persistence. Other platforms keep local UI state only.
     } on MissingPluginException {
@@ -631,10 +630,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _refreshInstalledTrackedPackages() async {
     try {
-      final installedPackages =
-          await _accessibilityChannel.invokeListMethod<String>(
-        'getInstalledTrackedPackages',
-      );
+      final installedPackages = await _accessibilityChannel
+          .invokeListMethod<String>('getInstalledTrackedPackages');
       if (!mounted || installedPackages == null) return;
       setState(() {
         _installedTrackedPackages = installedPackages.toSet();
@@ -654,15 +651,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<List<CustomTrackedApp>> _requestInstalledApps() async {
     try {
-      final installedApps =
-          await _accessibilityChannel.invokeListMethod<dynamic>(
-        'getInstalledApps',
-      );
+      final installedApps = await _accessibilityChannel
+          .invokeListMethod<dynamic>('getInstalledApps');
       if (installedApps == null) return const [];
       return installedApps
           .whereType<Map>()
           .map(CustomTrackedApp.fromMap)
-          .where((entry) => entry.appName.isNotEmpty && entry.packageName.isNotEmpty)
+          .where(
+            (entry) => entry.appName.isNotEmpty && entry.packageName.isNotEmpty,
+          )
           .toList();
     } on PlatformException {
       return const [];
@@ -729,15 +726,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     final segments = <AppUsageSegment>[];
     for (final app in _trackedUsageApps) {
-      final totalMinutes = app.packageNames.fold<int>(
+      final totalMinutes =
+          app.packageNames.fold<int>(
             0,
             (sum, packageName) => sum + (minutesByPackage[packageName] ?? 0),
           ) +
           minutesByPackage.entries.fold<int>(
             0,
-            (sum, entry) => app.packagePrefixes.any(
-              (prefix) => entry.key.startsWith(prefix),
-            )
+            (sum, entry) =>
+                app.packagePrefixes.any(
+                  (prefix) => entry.key.startsWith(prefix),
+                )
                 ? sum + entry.value
                 : sum,
           );
@@ -849,10 +848,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     setState(() {
       _blockedWebsites.insert(
         0,
-        BlockedWebsiteEntry(
-          domain: website,
-          blockedSince: DateTime.now(),
-        ),
+        BlockedWebsiteEntry(domain: website, blockedSince: DateTime.now()),
       );
     });
     _persistBlockedWebsites();
@@ -980,10 +976,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           );
           if (alreadyExists) return;
           setState(() {
-            _customTrackedApps = [
-              ..._customTrackedApps,
-              app,
-            ];
+            _customTrackedApps = [..._customTrackedApps, app];
             _dailyTimeLimits[app.settingKey] = selection.minutes;
             final pauseOnOpenKey = customTrackedAppPauseOnOpenSettingKey(
               app.packageName,
@@ -1098,11 +1091,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         step: displayedStep,
         onGetStarted: () {
           setState(() {
+            _onboardingStep = OnboardingStep.howPauseOnOpen;
+          });
+        },
+        onContinueFromPauseDemo: () {
+          setState(() {
+            _onboardingStep = OnboardingStep.howBlockDistractions;
+          });
+        },
+        onContinueFromBlockDemo: () {
+          setState(() {
             _onboardingStep = OnboardingStep.enableAccessibility;
           });
         },
         onOpenAccessibilitySettings: _openAccessibilitySettings,
-        onNextFromAccessibilityEnabled: () {
+        onContinueFromTracking: () {
           setState(() {
             _onboardingStep = OnboardingStep.enableUsageAccess;
           });
@@ -1166,6 +1169,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (_isAccessibilityEnabled != true &&
         _onboardingStep.index > OnboardingStep.enableAccessibility.index) {
       return OnboardingStep.enableAccessibility;
+    }
+    if (_isAccessibilityEnabled == true &&
+        _onboardingStep.index < OnboardingStep.trackDays.index) {
+      return OnboardingStep.trackDays;
     }
     if (_isAccessibilityEnabled == true &&
         _isUsageAccessEnabled != true &&
