@@ -158,12 +158,12 @@ class _DailyTrackerCard extends StatelessWidget {
     return DaysTrackerCalendarCard(
       title: 'Distraction-Free Days',
       tooltipMessage:
-          'No Scroll: 0-5 min of Shorts/Reels after bypass and no tracked '
-          'app limit overage.\n'
-          'Partial: 6-20 min of Shorts/Reels after bypass, or up to 20 min '
-          'combined tracked app limit overage.\n'
-          'Scrolled: over 20 min of Shorts/Reels after bypass, or over 20 '
-          'min combined tracked app limit overage.',
+          'A clean day means you stayed within your app limits and kept '
+          'Shorts/Reels use very low.\n\n'
+          'A partial day means there was a small slip, but it stayed fairly '
+          'contained.\n\n'
+          'A scrolled day means you went meaningfully over your limits or '
+          'spent too long in Shorts/Reels.',
       month: month,
       dayStatuses: scrollDayStatuses,
       firstTrackableDate: firstTrackableDate,

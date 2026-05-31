@@ -18,13 +18,13 @@ const _trackedUsageApps = [
   _TrackedUsageApp(
     appName: 'Instagram',
     packageNames: ['com.instagram.android'],
-    color: Color(0xFFE4405F),
+    color: Color(0xFF00688F),
   ),
   _TrackedUsageApp(
     appName: 'YouTube',
     packageNames: ['com.google.android.youtube'],
     packagePrefixes: ['app.revanced.android.youtube'],
-    color: Color(0xFFFF0000),
+    color: Color(0xFF2784A3),
   ),
 ];
 
@@ -221,6 +221,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       // Android-only setup. Other platforms can still render the app shell.
     } on MissingPluginException {
       // Android-only setup. Other platforms can still render the app shell.
+    }
+  }
+
+  Future<void> _openWebsite(String url) async {
+    try {
+      await _accessibilityChannel.invokeMethod<void>('openWebsite', {
+        'url': url,
+      });
+    } on PlatformException {
+      // Android-only helper. Other platforms can still render the app shell.
+    } on MissingPluginException {
+      // Android-only helper. Other platforms can still render the app shell.
     }
   }
 
@@ -786,13 +798,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Color _colorForPackageName(String packageName) {
     const palette = [
       Color(0xFF00688F),
-      Color(0xFF2D6A4F),
-      Color(0xFFBC6C25),
-      Color(0xFFB56576),
-      Color(0xFF355070),
-      Color(0xFF6D597A),
-      Color(0xFF588157),
-      Color(0xFF9C6644),
+      Color(0xFF2784A3),
+      Color(0xFF4A9AB6),
+      Color(0xFF71B6C9),
+      Color(0xFF005776),
+      Color(0xFF0E7397),
+      Color(0xFF3C8DAA),
+      Color(0xFF96CBDB),
     ];
     final index = packageName.hashCode.abs() % palette.length;
     return palette[index];
@@ -1066,16 +1078,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         },
         onOpenAccessibilitySettings: _openAccessibilitySettings,
         onOpenUsageAccessSettings: _openUsageAccessSettings,
-        onRestartOnboarding: () {
-          setState(() {
-            _hasCompletedOnboarding = false;
-            _onboardingStep = OnboardingStep.intro;
-            _selectedIndex = 0;
-          });
-          _setOnboardingCompleted(false);
-          _pageController.jumpToPage(0);
-          _refreshAccessibilityStatus();
-          _refreshUsageAccessStatus();
+        onOpenPrivacyPolicy: () {
+          _openWebsite('https://dashing-profiterole-4c88c4.netlify.app/');
         },
         isAccessibilityAllowed: _isAccessibilityEnabled == true,
         isUsageAccessAllowed: _isUsageAccessEnabled == true,

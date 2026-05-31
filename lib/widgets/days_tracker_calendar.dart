@@ -58,8 +58,6 @@ class DaysTrackerCalendarCard extends StatelessWidget {
         color: appText,
         fontWeight: FontWeight.w700,
     );
-    final tooltipIconColor = appMutedText.withValues(alpha: 0.88);
-
     return Container(
       padding: padding,
       decoration: BoxDecoration(
@@ -77,30 +75,28 @@ class DaysTrackerCalendarCard extends StatelessWidget {
                   message: tooltipMessage,
                   triggerMode: TooltipTriggerMode.tap,
                   waitDuration: Duration.zero,
-                  showDuration: const Duration(seconds: 4),
-                  preferBelow: false,
+                  showDuration: const Duration(seconds: 3),
+                  preferBelow: true,
                   textStyle: const TextStyle(
                     color: Colors.white,
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    height: 1.35,
+                    height: 1.3,
                   ),
                   decoration: BoxDecoration(
                     color: appText.withValues(alpha: 0.94),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Container(
-                    width: 28,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      color: appSurfaceStrong,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Icon(
-                      Icons.question_mark_rounded,
-                      size: 18,
-                      color: tooltipIconColor,
-                    ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  margin: const EdgeInsets.symmetric(horizontal: 20),
+                  child: SvgPicture.asset(
+                    'assets/icons/help.svg',
+                    width: 22,
+                    height: 22,
+                    colorFilter: const ColorFilter.mode(brand, BlendMode.srcIn),
                   ),
                 ),
             ],

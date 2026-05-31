@@ -9,7 +9,7 @@ class SettingsTab extends StatelessWidget {
     required this.onBackToHome,
     required this.onOpenAccessibilitySettings,
     required this.onOpenUsageAccessSettings,
-    required this.onRestartOnboarding,
+    required this.onOpenPrivacyPolicy,
     required this.isAccessibilityAllowed,
     required this.isUsageAccessAllowed,
   });
@@ -17,7 +17,7 @@ class SettingsTab extends StatelessWidget {
   final VoidCallback onBackToHome;
   final VoidCallback onOpenAccessibilitySettings;
   final VoidCallback onOpenUsageAccessSettings;
-  final VoidCallback onRestartOnboarding;
+  final VoidCallback onOpenPrivacyPolicy;
   final bool isAccessibilityAllowed;
   final bool isUsageAccessAllowed;
 
@@ -40,17 +40,6 @@ class SettingsTab extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
           sliver: SliverList(
             delegate: SliverChildListDelegate([
-              const _SettingsGroup(
-                title: 'Subscription',
-                children: [
-                  _SettingsRow(
-                    icon: Icons.confirmation_number_outlined,
-                    title: 'Enter Code',
-                    value: '',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
               _SettingsGroup(
                 title: 'Permissions',
                 children: [
@@ -72,34 +61,28 @@ class SettingsTab extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               _SettingsGroup(
-                title: 'Onboarding',
-                children: [
-                  _SettingsRow(
-                    icon: Icons.replay_rounded,
-                    title: 'Run Onboarding Again',
-                    value: '',
-                    onTap: onRestartOnboarding,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const _SettingsGroup(
                 title: 'App',
                 children: [
-                  _SettingsRow(
+                  const _SettingsRow(
                     icon: Icons.share_rounded,
                     title: 'Share with Friends',
                     value: '',
                   ),
-                  _SettingsRow(
+                  const _SettingsRow(
                     icon: Icons.rate_review_outlined,
                     title: 'Leave a Review',
                     value: '',
                   ),
                   _SettingsRow(
+                    icon: Icons.privacy_tip_outlined,
+                    title: 'Privacy Policy',
+                    value: '',
+                    onTap: onOpenPrivacyPolicy,
+                  ),
+                  const _SettingsRow(
                     icon: Icons.info_outline_rounded,
                     title: 'Version',
-                    value: '0.1.0',
+                    value: '0.1.2',
                     showChevron: false,
                   ),
                 ],
