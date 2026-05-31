@@ -12,6 +12,7 @@ class DaysTrackerCalendarCard extends StatelessWidget {
     required this.month,
     required this.dayStatuses,
     required this.firstTrackableDate,
+    this.tooltipMessage,
     this.canShowPreviousMonth = false,
     this.canShowNextMonth = false,
     this.onPreviousMonth,
@@ -25,6 +26,7 @@ class DaysTrackerCalendarCard extends StatelessWidget {
   final DateTime month;
   final Map<String, ScrollDayStatus> dayStatuses;
   final DateTime firstTrackableDate;
+  final String? tooltipMessage;
   final bool canShowPreviousMonth;
   final bool canShowNextMonth;
   final VoidCallback? onPreviousMonth;
@@ -53,9 +55,10 @@ class DaysTrackerCalendarCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final titleStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
-      color: appText,
-      fontWeight: FontWeight.w700,
+        color: appText,
+        fontWeight: FontWeight.w700,
     );
+    final tooltipIconColor = appMutedText.withValues(alpha: 0.88);
 
     return Container(
       padding: padding,
@@ -66,7 +69,42 @@ class DaysTrackerCalendarCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: titleStyle),
+          Row(
+            children: [
+              Expanded(child: Text(title, style: titleStyle)),
+              if (tooltipMessage != null)
+                Tooltip(
+                  message: tooltipMessage,
+                  triggerMode: TooltipTriggerMode.tap,
+                  waitDuration: Duration.zero,
+                  showDuration: const Duration(seconds: 4),
+                  preferBelow: false,
+                  textStyle: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                  decoration: BoxDecoration(
+                    color: appText.withValues(alpha: 0.94),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: appSurfaceStrong,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Icon(
+                      Icons.question_mark_rounded,
+                      size: 18,
+                      color: tooltipIconColor,
+                    ),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 14),
           Row(
             children: [

@@ -109,6 +109,9 @@ open class MainActivity : FlutterActivity() {
                 "getTodayUsageStats" -> {
                     result.success(getTodayUsageStats())
                 }
+                "getTodayScrollHeuristicMetrics" -> {
+                    result.success(getTodayScrollHeuristicMetrics())
+                }
                 "setDailyTimeLimit" -> {
                     val settingKey = call.argument<String>("settingKey")
                     val minutes = call.argument<Int>("minutes")
@@ -340,6 +343,30 @@ open class MainActivity : FlutterActivity() {
             .filter { usage -> (usage["minutes"] as Int) > 0 }
     }
 
+    private fun getTodayScrollHeuristicMetrics(): Map<String, Int> {
+        if (!isUsageAccessEnabled()) {
+            return mapOf(
+                "shortFormBypassMinutes" to 0,
+                "trackedLimitOverageMinutes" to 0,
+            )
+        }
+
+        val todayWindow = getTodayWindow()
+        val shortFormBypassMillis = getShortFormBypassForegroundMillis(
+            startTime = todayWindow.first,
+            endTime = todayWindow.second,
+        )
+        val trackedLimitOverageMillis = getTrackedLimitOverageMillis(
+            startTime = todayWindow.first,
+            endTime = todayWindow.second,
+        )
+
+        return mapOf(
+            "shortFormBypassMinutes" to (shortFormBypassMillis / 60000L).toInt(),
+            "trackedLimitOverageMinutes" to (trackedLimitOverageMillis / 60000L).toInt(),
+        )
+    }
+
     private fun getInstalledTrackedPackages(): List<String> {
         val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val launcherPackages = packageManager
@@ -446,6 +473,166 @@ open class MainActivity : FlutterActivity() {
         }
 
         return totalsByPackage
+    }
+
+    private fun getForegroundMillisForAppLimit(
+        appLimit: AppLimit,
+        startTime: Long,
+        endTime: Long,
+    ): Long {
+        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
+        val event = UsageEvents.Event()
+        val activeStartTimes = mutableMapOf<String, Long>()
+        var totalMillis = 0L
+
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            val packageName = event.packageName ?: continue
+            if (!appLimit.matches(packageName)) continue
+
+            when (event.eventType) {
+                UsageEvents.Event.ACTIVITY_RESUMED,
+                UsageEvents.Event.MOVE_TO_FOREGROUND,
+                -> {
+                    activeStartTimes[packageName] = event.timeStamp
+                }
+
+                UsageEvents.Event.ACTIVITY_PAUSED,
+                UsageEvents.Event.MOVE_TO_BACKGROUND,
+                -> {
+                    val start = activeStartTimes.remove(packageName) ?: continue
+                    if (event.timeStamp > start) {
+                        totalMillis += event.timeStamp - start
+                    }
+                }
+            }
+        }
+
+        activeStartTimes.values.forEach { start ->
+            if (endTime > start) {
+                totalMillis += endTime - start
+            }
+        }
+
+        return totalMillis
+    }
+
+    private fun getTrackedLimitOverageMillis(
+        startTime: Long,
+        endTime: Long,
+    ): Long {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        var totalOverageMillis = 0L
+
+        for (appLimit in getTrackedAppLimits()) {
+            if (!prefs.contains(appLimit.settingKey)) continue
+            val configuredMinutes = prefs.getInt(appLimit.settingKey, 0)
+            val limitMillis = when {
+                configuredMinutes == AppGuardAccessibilityService.TEN_SECOND_LIMIT_VALUE -> 10000L
+                configuredMinutes > 0 -> configuredMinutes * 60000L
+                else -> 0L
+            }
+            if (limitMillis <= 0L) continue
+
+            val foregroundMillis = getForegroundMillisForAppLimit(
+                appLimit = appLimit,
+                startTime = startTime,
+                endTime = endTime,
+            )
+            totalOverageMillis += (foregroundMillis - limitMillis).coerceAtLeast(0L)
+        }
+
+        return totalOverageMillis
+    }
+
+    private fun getShortFormBypassForegroundMillis(
+        startTime: Long,
+        endTime: Long,
+    ): Long {
+        val windows = getShortFormBypassWindows()
+            .filter { window ->
+                window.endMillis > startTime && window.startMillis < endTime
+            }
+        if (windows.isEmpty()) return 0L
+
+        return windows
+            .groupBy { it.target }
+            .entries
+            .sumOf { (target, targetWindows) ->
+                val appLimit = when (target) {
+                    AppGuardAccessibilityService.TARGET_YOUTUBE -> builtInTrackedAppLimits.first {
+                        it.settingKey == "youtube_app"
+                    }
+                    else -> builtInTrackedAppLimits.first {
+                        it.settingKey == "instagram_app"
+                    }
+                }
+
+                mergeBypassWindows(targetWindows, startTime, endTime).sumOf { window ->
+                    getForegroundMillisForAppLimit(
+                        appLimit = appLimit,
+                        startTime = window.startMillis,
+                        endTime = window.endMillis,
+                    )
+                }
+            }
+    }
+
+    private fun mergeBypassWindows(
+        windows: List<ShortFormBypassWindow>,
+        startTime: Long,
+        endTime: Long,
+    ): List<ShortFormBypassWindow> {
+        if (windows.isEmpty()) return emptyList()
+
+        val sortedWindows = windows
+            .map { window ->
+                window.copy(
+                    startMillis = maxOf(window.startMillis, startTime),
+                    endMillis = minOf(window.endMillis, endTime),
+                )
+            }
+            .filter { window -> window.endMillis > window.startMillis }
+            .sortedBy { window -> window.startMillis }
+        if (sortedWindows.isEmpty()) return emptyList()
+
+        val merged = mutableListOf(sortedWindows.first())
+        for (index in 1 until sortedWindows.size) {
+            val currentWindow = sortedWindows[index]
+            val lastWindow = merged.removeAt(merged.lastIndex)
+            if (currentWindow.startMillis <= lastWindow.endMillis) {
+                merged.add(
+                    lastWindow.copy(
+                        endMillis = maxOf(lastWindow.endMillis, currentWindow.endMillis),
+                    ),
+                )
+            } else {
+                merged.add(lastWindow)
+                merged.add(currentWindow)
+            }
+        }
+        return merged
+    }
+
+    private fun getShortFormBypassWindows(): List<ShortFormBypassWindow> {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        val serialized = prefs.getString(
+            AppGuardAccessibilityService.SHORT_FORM_BYPASS_WINDOWS_PREF_KEY,
+            null,
+        ) ?: return emptyList()
+        val jsonArray = JSONArray(serialized)
+
+        return List(jsonArray.length()) { index ->
+            val entry = jsonArray.optJSONObject(index) ?: JSONObject()
+            ShortFormBypassWindow(
+                target = entry.optString("target"),
+                startMillis = entry.optLong("startMillis"),
+                endMillis = entry.optLong("endMillis"),
+            )
+        }.filter { window ->
+            window.target.isNotBlank() && window.endMillis > window.startMillis
+        }
     }
 
     private fun addTrackedDuration(
@@ -704,6 +891,12 @@ open class MainActivity : FlutterActivity() {
                 packagePrefixes.any { prefix -> packageName.startsWith(prefix) }
         }
     }
+
+    private data class ShortFormBypassWindow(
+        val target: String,
+        val startMillis: Long,
+        val endMillis: Long,
+    )
 
     private val builtInTrackedAppLimits = listOf(
         AppLimit(

@@ -9,6 +9,7 @@ enum OnboardingStep {
   howPauseOnOpen,
   howBlockDistractions,
   enableAccessibility,
+  accessibilityGoodStuff,
   trackDays,
   enableUsageAccess,
   allDone,
@@ -18,20 +19,24 @@ class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({
     super.key,
     required this.step,
+    required this.onBack,
     required this.onGetStarted,
     required this.onContinueFromPauseDemo,
     required this.onContinueFromBlockDemo,
     required this.onOpenAccessibilitySettings,
+    required this.onContinueFromAccessibilitySuccess,
     required this.onContinueFromTracking,
     required this.onOpenUsageAccessSettings,
     required this.onFinish,
   });
 
   final OnboardingStep step;
+  final VoidCallback? onBack;
   final VoidCallback onGetStarted;
   final VoidCallback onContinueFromPauseDemo;
   final VoidCallback onContinueFromBlockDemo;
   final VoidCallback onOpenAccessibilitySettings;
+  final VoidCallback onContinueFromAccessibilitySuccess;
   final VoidCallback onContinueFromTracking;
   final VoidCallback onOpenUsageAccessSettings;
   final VoidCallback onFinish;
@@ -42,9 +47,9 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   static const _introFadeStartDelays = [
-    Duration(seconds: 2),
-    Duration(milliseconds: 5000),
-    Duration(milliseconds: 7000),
+    Duration(milliseconds: 1000),
+    Duration(milliseconds: 2500),
+    Duration(milliseconds: 4000),
   ];
 
   final List<bool> _introVisible = List<bool>.filled(3, false);
@@ -96,7 +101,29 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 12),
+              SizedBox(
+                height: 48,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: widget.onBack == null
+                      ? const SizedBox(width: 48, height: 48)
+                      : Transform.translate(
+                          offset: const Offset(-8, 0),
+                          child: IconButton(
+                            onPressed: widget.onBack,
+                            icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                            color: const Color(0xFF111827),
+                            tooltip: 'Back',
+                            padding: EdgeInsets.zero,
+                            alignment: Alignment.centerLeft,
+                            constraints: const BoxConstraints(
+                              minWidth: 40,
+                              minHeight: 40,
+                            ),
+                          ),
+                        ),
+                ),
+              ),
               Expanded(
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 280),
@@ -225,13 +252,22 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   Widget _buildStepContent(_OnboardingContent content) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    final textAlign = content.centerText ? TextAlign.center : TextAlign.left;
+    final crossAxisAlignment = content.centerText
+        ? CrossAxisAlignment.center
+        : CrossAxisAlignment.stretch;
+    final showPreviewFirst = content.centerText;
+
+    final contentColumn = Column(
+      crossAxisAlignment: crossAxisAlignment,
       children: [
+        if (showPreviewFirst && content.preview != null) ...[
+          content.preview!,
+          const SizedBox(height: 28),
+        ],
         Text(
           content.title,
-          textAlign: TextAlign.left,
+          textAlign: textAlign,
           style: const TextStyle(
             fontSize: 34,
             fontWeight: FontWeight.w800,
@@ -242,7 +278,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const SizedBox(height: 12),
           Text(
             content.subtitle!,
-            textAlign: TextAlign.left,
+            textAlign: textAlign,
             style: const TextStyle(
               fontSize: 17,
               height: 1.45,
@@ -250,7 +286,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ),
           ),
         ],
-        if (content.preview != null) ...[
+        if (!showPreviewFirst && content.preview != null) ...[
           const SizedBox(height: 28),
           content.preview!,
         ],
@@ -258,7 +294,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const SizedBox(height: 18),
           Text(
             content.description!,
-            textAlign: TextAlign.left,
+            textAlign: textAlign,
             style: const TextStyle(
               fontSize: 16,
               height: 1.5,
@@ -266,8 +302,29 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ),
           ),
         ],
+        const SizedBox(height: 20),
       ],
     );
+
+    if (content.centerVertically) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          return ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Column(
+              children: [
+                const Spacer(),
+                contentColumn,
+                const SizedBox(height: 44),
+                const Spacer(),
+              ],
+            ),
+          );
+        },
+      );
+    }
+
+    return SingleChildScrollView(child: contentColumn);
   }
 
   _OnboardingContent _contentForStep() {
@@ -300,6 +357,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               'Tempus can pause you before you slip into an automatic session. Open the app, check in with yourself, then decide if you actually want to continue.',
           buttonLabel: 'Next',
           onPressed: widget.onContinueFromPauseDemo,
+          centerVertically: true,
         );
       case OnboardingStep.howBlockDistractions:
         return _OnboardingContent(
@@ -325,17 +383,35 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               'You can block the parts of apps that waste your time most, while still keeping the rest of the app available for the things you actually need.',
           buttonLabel: 'Next',
           onPressed: widget.onContinueFromBlockDemo,
+          centerVertically: true,
         );
       case OnboardingStep.enableAccessibility:
         return _OnboardingContent(
-          title: 'Enable Accessibility',
+          title: 'Accessibility',
           subtitle:
               'Tempus needs Accessibility to detect supported apps and show blocking prompts.',
-          preview: const _PermissionBadge(
-            icon: Icons.accessibility_new_rounded,
+          preview: const _PermissionGuidePreview(
+            firstStep: 'Find Tempus in Downloaded apps',
+            firstCard: _PermissionListMock(
+              sectionLabel: 'Downloaded apps',
+              appName: 'Tempus',
+              statusLabel: 'Tap to configure',
+            ),
+            secondStep: 'Turn on Use Tempus',
+            secondCard: _PermissionToggleMock(toggleLabel: 'Tempus Guard'),
           ),
           buttonLabel: 'Open Accessibility Settings',
           onPressed: widget.onOpenAccessibilitySettings,
+        );
+      case OnboardingStep.accessibilityGoodStuff:
+        return _OnboardingContent(
+          title: 'Good Stuff',
+          subtitle: 'Accessibility is on. Tempus can step in earlier.',
+          preview: const _CenteredSuccessIcon(icon: Icons.verified_rounded),
+          buttonLabel: 'Next',
+          onPressed: widget.onContinueFromAccessibilitySuccess,
+          centerVertically: true,
+          centerText: true,
         );
       case OnboardingStep.trackDays:
         return _OnboardingContent(
@@ -345,24 +421,35 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           preview: const _ScrollFreeDaysPreview(),
           buttonLabel: 'Next',
           onPressed: widget.onContinueFromTracking,
+          centerVertically: true,
         );
       case OnboardingStep.enableUsageAccess:
         return _OnboardingContent(
-          title: 'Enable Usage Access',
+          title: 'Usage Access',
           subtitle:
               'Usage access lets Tempus measure time limits and track how long apps are open.',
-          preview: const _PermissionBadge(icon: Icons.query_stats_rounded),
+          preview: const _PermissionGuidePreview(
+            firstStep: 'Open Tempus in the Usage access list',
+            firstCard: _PermissionListMock(
+              sectionLabel: 'Apps with access controls',
+              appName: 'Tempus',
+              statusLabel: 'Tap to allow',
+            ),
+            secondStep: 'Turn on Permit usage access',
+            secondCard: _PermissionToggleMock(toggleLabel: 'Tempus Guard'),
+          ),
           buttonLabel: 'Open Usage Access Settings',
           onPressed: widget.onOpenUsageAccessSettings,
         );
       case OnboardingStep.allDone:
         return _OnboardingContent(
           title: 'All Done',
-          subtitle:
-              'Tempus is set up and ready. You can start using the app now.',
-          preview: const _PermissionBadge(icon: Icons.done_all_rounded),
+          subtitle: 'Tempus is ready.',
+          preview: const _CenteredSuccessIcon(icon: Icons.done_all_rounded),
           buttonLabel: 'Next',
           onPressed: widget.onFinish,
+          centerVertically: true,
+          centerText: true,
         );
     }
   }
@@ -376,32 +463,228 @@ class _OnboardingContent {
     this.subtitle,
     this.preview,
     this.description,
+    this.centerVertically = false,
+    this.centerText = false,
   });
 
   final String title;
   final String? subtitle;
   final Widget? preview;
   final String? description;
+  final bool centerVertically;
+  final bool centerText;
   final String buttonLabel;
   final VoidCallback onPressed;
 }
 
-class _PermissionBadge extends StatelessWidget {
-  const _PermissionBadge({required this.icon});
+class _CenteredSuccessIcon extends StatelessWidget {
+  const _CenteredSuccessIcon({required this.icon});
 
   final IconData icon;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Container(
-        width: 96,
-        height: 96,
-        decoration: BoxDecoration(
-          color: brand.withValues(alpha: 0.12),
-          shape: BoxShape.circle,
+    return Center(child: Icon(icon, size: 74, color: brand));
+  }
+}
+
+class _PermissionGuidePreview extends StatelessWidget {
+  const _PermissionGuidePreview({
+    required this.firstStep,
+    required this.firstCard,
+    required this.secondStep,
+    required this.secondCard,
+  });
+
+  final String firstStep;
+  final Widget firstCard;
+  final String secondStep;
+  final Widget secondCard;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 24),
+        _PermissionInstructionSection(label: '1. $firstStep', child: firstCard),
+        const SizedBox(height: 46),
+        _PermissionInstructionSection(
+          label: '2. $secondStep',
+          child: secondCard,
         ),
-        child: Icon(icon, size: 50, color: brand),
+      ],
+    );
+  }
+}
+
+class _PermissionInstructionSection extends StatelessWidget {
+  const _PermissionInstructionSection({
+    required this.label,
+    required this.child,
+  });
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 24,
+            height: 1.15,
+            fontWeight: FontWeight.w500,
+            color: Color(0xFF111827),
+            letterSpacing: -0.6,
+          ),
+        ),
+        const SizedBox(height: 14),
+        child,
+      ],
+    );
+  }
+}
+
+class _PermissionListMock extends StatelessWidget {
+  const _PermissionListMock({
+    required this.sectionLabel,
+    required this.appName,
+    required this.statusLabel,
+  });
+
+  final String sectionLabel;
+  final String appName;
+  final String statusLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PermissionPhoneCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            sectionLabel,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: brand,
+            ),
+          ),
+          const SizedBox(height: 22),
+          Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.asset(
+                  'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png',
+                  width: 34,
+                  height: 34,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    appName,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF111827),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    statusLabel,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF6B7280),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PermissionToggleMock extends StatelessWidget {
+  const _PermissionToggleMock({required this.toggleLabel});
+
+  final String toggleLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PermissionPhoneCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+            decoration: BoxDecoration(
+              color: brand.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(28),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    toggleLabel,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF111827),
+                    ),
+                  ),
+                ),
+                Container(
+                  width: 54,
+                  height: 32,
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: brand,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PermissionPhoneCard extends StatelessWidget {
+  const _PermissionPhoneCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return _HowItWorksCard(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),
+        child: child,
       ),
     );
   }

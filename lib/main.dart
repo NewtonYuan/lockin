@@ -83,7 +83,6 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const _accessibilityChannel = MethodChannel('tempus/accessibility');
-  static const _partialScrollThresholdMinutes = 30;
   static const _navFadeDuration = Duration(milliseconds: 150);
 
   int _selectedIndex = 0;
@@ -95,6 +94,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _bypassAccessibilityGate = false;
   bool _hasCompletedOnboarding = false;
   bool _hasLoadedOnboardingState = false;
+  bool _allowOnboardingBackNavigation = false;
   OnboardingStep _onboardingStep = OnboardingStep.intro;
   DateTime _trackerMonth = DateTime(DateTime.now().year, DateTime.now().month);
   DateTime _appInstalledOn = DateTime.now();
@@ -166,7 +166,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         if (_isAccessibilityEnabled == true) {
           _bypassAccessibilityGate = false;
           if (previousValue == false) {
-            _onboardingStep = OnboardingStep.trackDays;
+            _allowOnboardingBackNavigation = false;
+            _onboardingStep = OnboardingStep.accessibilityGoodStuff;
           }
         }
       });
@@ -191,7 +192,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       );
       if (!mounted || shouldShow != true) return;
       setState(() {
-        _onboardingStep = OnboardingStep.trackDays;
+        _allowOnboardingBackNavigation = false;
+        _onboardingStep = OnboardingStep.accessibilityGoodStuff;
       });
     } on PlatformException {
       // Android-only setup flow. Other platforms ignore this.
@@ -233,6 +235,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         if (_isUsageAccessEnabled == true &&
             _isAccessibilityEnabled == true &&
             !_hasCompletedOnboarding) {
+          _allowOnboardingBackNavigation = false;
           _onboardingStep = OnboardingStep.allDone;
         }
       });
@@ -255,12 +258,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       final usageStats = await _accessibilityChannel.invokeListMethod<dynamic>(
         'getTodayUsageStats',
       );
+      final scrollHeuristicMetrics = await _accessibilityChannel
+          .invokeMapMethod<String, dynamic>('getTodayScrollHeuristicMetrics');
       if (!mounted || usageStats == null) return;
       final usageSegments = _usageSegmentsFromStats(usageStats);
       setState(() {
         _usageSegments = usageSegments;
       });
-      _updateTodayScrollStatus(usageSegments);
+      _updateTodayScrollStatus(scrollHeuristicMetrics);
     } on PlatformException {
       if (!mounted) return;
       setState(() {
@@ -668,16 +673,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  void _updateTodayScrollStatus(List<AppUsageSegment> usageSegments) {
+  void _updateTodayScrollStatus(Map<String, dynamic>? scrollHeuristicMetrics) {
     if (_isUsageAccessEnabled != true) return;
-    final totalMinutes = usageSegments.fold<int>(
-      0,
-      (sum, segment) => sum + segment.minutes,
-    );
-    final nextStatus = switch (totalMinutes) {
-      0 => ScrollDayStatus.noScroll,
-      <= _partialScrollThresholdMinutes => ScrollDayStatus.partialScroll,
-      _ => ScrollDayStatus.scrolled,
+    final shortFormBypassMinutes =
+        scrollHeuristicMetrics?['shortFormBypassMinutes'] as int? ?? 0;
+    final trackedLimitOverageMinutes =
+        scrollHeuristicMetrics?['trackedLimitOverageMinutes'] as int? ?? 0;
+    final nextStatus = switch ((
+      trackedLimitOverageMinutes,
+      shortFormBypassMinutes,
+    )) {
+      (> 20, _) || (_, > 20) => ScrollDayStatus.scrolled,
+      (> 0, _) || (_, > 5) => ScrollDayStatus.partialScroll,
+      _ => ScrollDayStatus.noScroll,
     };
     final dateKey = _dateKey(DateTime.now());
     if (_scrollDayStatuses[dateKey] == nextStatus) return;
@@ -1086,27 +1094,46 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     if (!_hasCompletedOnboarding && !_bypassAccessibilityGate) {
       final displayedStep = _effectiveOnboardingStep();
+      final previousStep = _previousOnboardingStep(displayedStep);
 
       return OnboardingScreen(
         step: displayedStep,
+        onBack: previousStep == null
+            ? null
+            : () {
+                setState(() {
+                  _allowOnboardingBackNavigation = true;
+                  _onboardingStep = previousStep;
+                });
+              },
         onGetStarted: () {
           setState(() {
+            _allowOnboardingBackNavigation = false;
             _onboardingStep = OnboardingStep.howPauseOnOpen;
           });
         },
         onContinueFromPauseDemo: () {
           setState(() {
+            _allowOnboardingBackNavigation = false;
             _onboardingStep = OnboardingStep.howBlockDistractions;
           });
         },
         onContinueFromBlockDemo: () {
           setState(() {
+            _allowOnboardingBackNavigation = false;
             _onboardingStep = OnboardingStep.enableAccessibility;
           });
         },
         onOpenAccessibilitySettings: _openAccessibilitySettings,
+        onContinueFromAccessibilitySuccess: () {
+          setState(() {
+            _allowOnboardingBackNavigation = false;
+            _onboardingStep = OnboardingStep.trackDays;
+          });
+        },
         onContinueFromTracking: () {
           setState(() {
+            _allowOnboardingBackNavigation = false;
             _onboardingStep = OnboardingStep.enableUsageAccess;
           });
         },
@@ -1115,6 +1142,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           if (!mounted) return;
           if (_isUsageAccessEnabled == true) {
             setState(() {
+              _allowOnboardingBackNavigation = false;
               _onboardingStep = OnboardingStep.allDone;
             });
           }
@@ -1163,6 +1191,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   OnboardingStep _effectiveOnboardingStep() {
+    if (_allowOnboardingBackNavigation) {
+      return _onboardingStep;
+    }
     if (_isAccessibilityEnabled == true && _isUsageAccessEnabled == true) {
       return OnboardingStep.allDone;
     }
@@ -1172,7 +1203,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
     if (_isAccessibilityEnabled == true &&
         _onboardingStep.index < OnboardingStep.trackDays.index) {
-      return OnboardingStep.trackDays;
+      return OnboardingStep.accessibilityGoodStuff;
     }
     if (_isAccessibilityEnabled == true &&
         _isUsageAccessEnabled != true &&
@@ -1180,6 +1211,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return OnboardingStep.enableUsageAccess;
     }
     return _onboardingStep;
+  }
+
+  OnboardingStep? _previousOnboardingStep(OnboardingStep step) {
+    switch (step) {
+      case OnboardingStep.intro:
+        return null;
+      case OnboardingStep.howPauseOnOpen:
+        return OnboardingStep.intro;
+      case OnboardingStep.howBlockDistractions:
+        return OnboardingStep.howPauseOnOpen;
+      case OnboardingStep.enableAccessibility:
+        return OnboardingStep.howBlockDistractions;
+      case OnboardingStep.accessibilityGoodStuff:
+        return OnboardingStep.enableAccessibility;
+      case OnboardingStep.trackDays:
+        return OnboardingStep.accessibilityGoodStuff;
+      case OnboardingStep.enableUsageAccess:
+        return OnboardingStep.trackDays;
+      case OnboardingStep.allDone:
+        return OnboardingStep.enableUsageAccess;
+    }
   }
 }
 

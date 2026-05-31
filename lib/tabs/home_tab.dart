@@ -157,6 +157,13 @@ class _DailyTrackerCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return DaysTrackerCalendarCard(
       title: 'Distraction-Free Days',
+      tooltipMessage:
+          'No Scroll: 0-5 min of Shorts/Reels after bypass and no tracked '
+          'app limit overage.\n'
+          'Partial: 6-20 min of Shorts/Reels after bypass, or up to 20 min '
+          'combined tracked app limit overage.\n'
+          'Scrolled: over 20 min of Shorts/Reels after bypass, or over 20 '
+          'min combined tracked app limit overage.',
       month: month,
       dayStatuses: scrollDayStatuses,
       firstTrackableDate: firstTrackableDate,
@@ -486,7 +493,7 @@ class _HomeShortcutCardsRow extends StatelessWidget {
             );
         final titleHeight = math.max(
           _measureTitleHeight('Blocked Shorts', titleStyle, titleWidth),
-          _measureTitleHeight('Restricted Apps', titleStyle, titleWidth),
+          _measureTitleHeight('Restricted', titleStyle, titleWidth),
         );
         final cardHeight =
             (_verticalPadding * 2) +
@@ -514,7 +521,7 @@ class _HomeShortcutCardsRow extends StatelessWidget {
               const SizedBox(width: _gap),
               Expanded(
                 child: _HomeShortcutCard(
-                  title: 'Restricted Apps',
+                  title: 'Restricted',
                   titleStyle: titleStyle,
                   onTap: onOpenBlockedShorts,
                   trailing: _ResponsiveRestrictedAppsTrail(

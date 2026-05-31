@@ -16,6 +16,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import java.util.Calendar
 import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONArray
+import org.json.JSONObject
 
 class AppGuardAccessibilityService : AccessibilityService() {
     private var lastForegroundPackage: String? = null
@@ -758,6 +759,39 @@ class AppGuardAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun recordShortFormBypassWindow(
+        target: String,
+        startMillis: Long,
+        endMillis: Long,
+    ) {
+        if (endMillis <= startMillis) return
+
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val existing = prefs.getString(SHORT_FORM_BYPASS_WINDOWS_PREF_KEY, null)
+        val windows = JSONArray(existing ?: "[]")
+        val trimmedWindows = JSONArray()
+        val pruneBeforeMillis = System.currentTimeMillis() - (35L * 24L * 60L * 60L * 1000L)
+
+        for (index in 0 until windows.length()) {
+            val entry = windows.optJSONObject(index) ?: continue
+            if (entry.optLong("endMillis") >= pruneBeforeMillis) {
+                trimmedWindows.put(entry)
+            }
+        }
+
+        trimmedWindows.put(
+            JSONObject().apply {
+                put("target", target)
+                put("startMillis", startMillis)
+                put("endMillis", endMillis)
+            },
+        )
+
+        prefs.edit()
+            .putString(SHORT_FORM_BYPASS_WINDOWS_PREF_KEY, trimmedWindows.toString())
+            .apply()
+    }
+
     private fun isYouTubePackage(packageName: String): Boolean {
         return packageName == YOUTUBE_PACKAGE_NAME ||
             packageName.startsWith(YOUTUBE_REVANCED_PACKAGE_PREFIX)
@@ -767,6 +801,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val PREFS_NAME = "tempus_app_guard"
         const val CUSTOM_TRACKED_APPS_PREF_KEY = "custom_tracked_apps"
         const val BLOCKED_WEBSITES_PREF_KEY = "blocked_websites"
+        const val SHORT_FORM_BYPASS_WINDOWS_PREF_KEY = "short_form_bypass_windows"
         const val TEN_SECOND_LIMIT_VALUE = -10
         const val AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY = "awaiting_accessibility_enable"
         const val ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY = "accessibility_enabled_success"
@@ -915,14 +950,26 @@ class AppGuardAccessibilityService : AccessibilityService() {
         }
 
         fun allowTargetForMinutes(target: String, minutes: Int) {
-            val allowedUntil = System.currentTimeMillis() + minutes * 60 * 1000L
-            when (target.lowercase()) {
+            val startMillis = System.currentTimeMillis()
+            val allowedUntil = startMillis + minutes * 60 * 1000L
+            val normalizedTarget = target.lowercase()
+            when (normalizedTarget) {
                 TARGET_YOUTUBE -> {
                     youTubeAllowedUntilMillis = allowedUntil
                 }
                 else -> {
                     instagramAllowedUntilMillis = allowedUntil
                 }
+            }
+            if (
+                normalizedTarget == TARGET_INSTAGRAM ||
+                    normalizedTarget == TARGET_YOUTUBE
+            ) {
+                activeService?.recordShortFormBypassWindow(
+                    target = normalizedTarget,
+                    startMillis = startMillis,
+                    endMillis = allowedUntil,
+                )
             }
             activeService?.dismissPromptOverlay() ?: run {
                 promptActive = false
