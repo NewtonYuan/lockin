@@ -172,6 +172,15 @@ open class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                 }
+                "shareText" -> {
+                    val text = call.argument<String>("text")
+                    if (text.isNullOrBlank()) {
+                        result.error("missing_text", "text is required", null)
+                    } else {
+                        shareText(text)
+                        result.success(null)
+                    }
+                }
                 "getInstalledTrackedPackages" -> {
                     result.success(getInstalledTrackedPackages())
                 }
@@ -815,6 +824,20 @@ open class MainActivity : FlutterActivity() {
         startActivity(
             Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
                 addCategory(Intent.CATEGORY_BROWSABLE)
+            },
+        )
+    }
+
+    private fun shareText(text: String) {
+        startActivity(
+            Intent.createChooser(
+                Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                },
+                null,
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             },
         )
     }

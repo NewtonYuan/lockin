@@ -9,6 +9,8 @@ class SettingsTab extends StatelessWidget {
     required this.onBackToHome,
     required this.onOpenAccessibilitySettings,
     required this.onOpenUsageAccessSettings,
+    required this.onShareApp,
+    required this.onLeaveReview,
     required this.onOpenPrivacyPolicy,
     required this.isAccessibilityAllowed,
     required this.isUsageAccessAllowed,
@@ -17,6 +19,8 @@ class SettingsTab extends StatelessWidget {
   final VoidCallback onBackToHome;
   final VoidCallback onOpenAccessibilitySettings;
   final VoidCallback onOpenUsageAccessSettings;
+  final VoidCallback onShareApp;
+  final VoidCallback onLeaveReview;
   final VoidCallback onOpenPrivacyPolicy;
   final bool isAccessibilityAllowed;
   final bool isUsageAccessAllowed;
@@ -63,15 +67,17 @@ class SettingsTab extends StatelessWidget {
               _SettingsGroup(
                 title: 'App',
                 children: [
-                  const _SettingsRow(
+                  _SettingsRow(
                     icon: Icons.share_rounded,
                     title: 'Share with Friends',
                     value: '',
+                    onTap: onShareApp,
                   ),
-                  const _SettingsRow(
+                  _SettingsRow(
                     icon: Icons.rate_review_outlined,
                     title: 'Leave a Review',
                     value: '',
+                    onTap: onLeaveReview,
                   ),
                   _SettingsRow(
                     icon: Icons.privacy_tip_outlined,

@@ -236,6 +236,46 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _shareText(String text) async {
+    try {
+      await _accessibilityChannel.invokeMethod<void>('shareText', {
+        'text': text,
+      });
+    } on PlatformException {
+      // Android-only helper. Other platforms can still render the app shell.
+    } on MissingPluginException {
+      // Android-only helper. Other platforms can still render the app shell.
+    }
+  }
+
+  String _shareAppMessage() {
+    final currentStreak = _currentDistractionFreeStreak();
+    final dayLabel = currentStreak == 1 ? 'day' : 'days';
+    return "I've spent $currentStreak $dayLabel distraction free! Join me on Tempus "
+        'https://play.google.com/store/apps/details?id=com.prestige.tempus';
+  }
+
+  int _currentDistractionFreeStreak() {
+    final today = DateTime.now();
+    final firstDate = DateTime(
+      _appInstalledOn.year,
+      _appInstalledOn.month,
+      _appInstalledOn.day,
+    );
+    final todayDate = DateTime(today.year, today.month, today.day);
+
+    var current = 0;
+    var cursor = todayDate;
+    while (!cursor.isBefore(firstDate)) {
+      final status =
+          _scrollDayStatuses[_dateKey(cursor)] ?? ScrollDayStatus.scrolled;
+      if (status != ScrollDayStatus.noScroll) break;
+      current++;
+      cursor = cursor.subtract(const Duration(days: 1));
+    }
+    return current;
+  }
+
   Future<void> _refreshUsageAccessStatus() async {
     try {
       final enabled = await _accessibilityChannel.invokeMethod<bool>(
@@ -956,6 +996,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             },
           );
         },
+        onShareApp: () {
+          _shareText(_shareAppMessage());
+        },
         onPreviousMonth: () {
           if (!_canShowPreviousTrackerMonth) return;
           setState(() {
@@ -1078,6 +1121,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         },
         onOpenAccessibilitySettings: _openAccessibilitySettings,
         onOpenUsageAccessSettings: _openUsageAccessSettings,
+        onShareApp: () {
+          _shareText(
+            'Tempus helps me spend less time scrolling. Join me on Tempus: '
+            'https://play.google.com/store/apps/details?id=com.prestige.tempus',
+          );
+        },
+        onLeaveReview: () {
+          _openWebsite(
+            'https://play.google.com/store/apps/details?id=com.prestige.tempus',
+          );
+        },
         onOpenPrivacyPolicy: () {
           _openWebsite('https://dashing-profiterole-4c88c4.netlify.app/');
         },

@@ -22,6 +22,7 @@ class HomeOverview extends StatelessWidget {
     required this.canShowPreviousMonth,
     required this.canShowNextMonth,
     required this.onOpenBlockedShorts,
+    required this.onShareApp,
     required this.onPreviousMonth,
     required this.onNextMonth,
   });
@@ -36,6 +37,7 @@ class HomeOverview extends StatelessWidget {
   final bool canShowPreviousMonth;
   final bool canShowNextMonth;
   final VoidCallback onOpenBlockedShorts;
+  final VoidCallback onShareApp;
   final VoidCallback onPreviousMonth;
   final VoidCallback onNextMonth;
 
@@ -104,6 +106,7 @@ class HomeOverview extends StatelessWidget {
                 child: _StreakSummaryCard(
                   scrollDayStatuses: scrollDayStatuses,
                   firstTrackableDate: firstTrackableDate,
+                  onShare: onShareApp,
                 ),
               ),
             ]),
@@ -552,10 +555,12 @@ class _StreakSummaryCard extends StatelessWidget {
   const _StreakSummaryCard({
     required this.scrollDayStatuses,
     required this.firstTrackableDate,
+    required this.onShare,
   });
 
   final Map<String, ScrollDayStatus> scrollDayStatuses;
   final DateTime firstTrackableDate;
+  final VoidCallback onShare;
 
   @override
   Widget build(BuildContext context) {
@@ -587,6 +592,7 @@ class _StreakSummaryCard extends StatelessWidget {
               child: _StreakSummaryItem(
                 label: 'Share',
                 iconAssetPath: 'assets/icons/share.svg',
+                onTap: onShare,
               ),
             ),
           ],
@@ -752,42 +758,51 @@ class _StreakSummaryItem extends StatelessWidget {
     required this.label,
     this.value,
     this.iconAssetPath,
+    this.onTap,
   });
 
   final String label;
   final String? value;
   final String? iconAssetPath;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (iconAssetPath != null)
-          SvgPicture.asset(
-            iconAssetPath!,
-            width: 24,
-            height: 24,
-            colorFilter: const ColorFilter.mode(appText, BlendMode.srcIn),
-          )
-        else
-          RichText(
-            textAlign: TextAlign.center,
-            text: TextSpan(children: _streakValueSpans(context, value ?? '')),
-          ),
-        const SizedBox(height: 6),
-        Text(
-          label,
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: appMutedText,
-            fontWeight: FontWeight.w700,
-            height: 1.15,
-          ),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (iconAssetPath != null)
+              SvgPicture.asset(
+                iconAssetPath!,
+                width: 24,
+                height: 24,
+                colorFilter: const ColorFilter.mode(appText, BlendMode.srcIn),
+              )
+            else
+              RichText(
+                textAlign: TextAlign.center,
+                text: TextSpan(children: _streakValueSpans(context, value ?? '')),
+              ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: appMutedText,
+                fontWeight: FontWeight.w700,
+                height: 1.15,
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
