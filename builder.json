@@ -1,0 +1,15 @@
+{
+  "project": "tempus",
+  "platform": "ios",
+  "github": {
+    "owner": "NewtonYuan",
+    "repo": "tempus"
+  },
+  "ios": {},
+  "flutter": {
+    "version": "3.41.9",
+    "watch": {}
+  },
+  "reactNative": {},
+  "mobai": {}
+}
