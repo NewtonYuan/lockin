@@ -50,9 +50,7 @@ class SettingsTab extends StatelessWidget {
                   _SettingsRow(
                     icon: Icons.accessibility_new_rounded,
                     title: 'Accessibility',
-                    value: isAccessibilityAllowed
-                        ? 'Allowed'
-                        : 'Denied',
+                    value: isAccessibilityAllowed ? 'Allowed' : 'Denied',
                     onTap: onOpenAccessibilitySettings,
                   ),
                   _SettingsRow(
@@ -102,10 +100,7 @@ class SettingsTab extends StatelessWidget {
 }
 
 class _SettingsGroup extends StatelessWidget {
-  const _SettingsGroup({
-    required this.title,
-    required this.children,
-  });
+  const _SettingsGroup({required this.title, required this.children});
 
   final String title;
   final List<Widget> children;
@@ -156,7 +151,6 @@ class _SettingsRow extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.value,
-    this.trailing,
     this.onTap,
     this.showChevron = true,
   });
@@ -164,7 +158,6 @@ class _SettingsRow extends StatelessWidget {
   final IconData icon;
   final String title;
   final String value;
-  final Widget? trailing;
   final VoidCallback? onTap;
   final bool showChevron;
   static const double _rowHeight = 56;
@@ -195,41 +188,34 @@ class _SettingsRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              if (trailing != null)
-                trailing!
-              else ...[
-                SizedBox(
-                  width: showChevron ? 88 : 104,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Flexible(
-                        child: Text(
-                          value,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.right,
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(
-                                color: appMutedText,
-                                fontWeight: FontWeight.w700,
-                              ),
+              SizedBox(
+                width: showChevron ? 88 : 104,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        value,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: appMutedText,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                      if (showChevron) ...[
-                        const SizedBox(width: 4),
-                        const Icon(
-                          Icons.chevron_right_rounded,
-                          color: appMutedText,
-                          size: 20,
-                        ),
-                      ],
+                    ),
+                    if (showChevron) ...[
+                      const SizedBox(width: 4),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        color: appMutedText,
+                        size: 20,
+                      ),
                     ],
-                  ),
+                  ],
                 ),
-              ],
+              ),
             ],
           ),
         ),

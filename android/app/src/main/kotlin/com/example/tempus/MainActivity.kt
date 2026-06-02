@@ -6,6 +6,7 @@ import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
@@ -76,7 +77,7 @@ open class MainActivity : FlutterActivity() {
                 }
                 "openUsageAccessSettings" -> {
                     markAwaitingUsageAccessEnable()
-                    startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    openUsageAccessSettings()
                     result.success(null)
                 }
                 "isAccessibilityServiceEnabled" -> {
@@ -241,6 +242,36 @@ open class MainActivity : FlutterActivity() {
         return enabledServices.split(':').any { service ->
             service.equals(expectedService, ignoreCase = true)
         }
+    }
+
+    private fun openUsageAccessSettings() {
+        val packageUri = Uri.fromParts("package", packageName, null)
+        val packageSpecificIntent =
+            Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                data = packageUri
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        val genericIntent =
+            Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+        when {
+            canResolveIntent(packageSpecificIntent) -> startActivity(packageSpecificIntent)
+            canResolveIntent(genericIntent) -> startActivity(genericIntent)
+            else -> {
+                val appDetailsIntent =
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = packageUri
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                startActivity(appDetailsIntent)
+            }
+        }
+    }
+
+    private fun canResolveIntent(intent: Intent): Boolean {
+        return intent.resolveActivity(packageManager) != null
     }
 
     private fun markAwaitingAccessibilityEnable() {

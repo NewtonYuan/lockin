@@ -214,6 +214,52 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _requestAccessibilityAccess() async {
+    if (_isAccessibilityEnabled == true) {
+      await _openAccessibilitySettings();
+      return;
+    }
+
+    final consented = await _showAccessibilityDisclosureDialog();
+    if (consented == true) {
+      await _openAccessibilitySettings();
+    }
+  }
+
+  Future<bool?> _showAccessibilityDisclosureDialog() {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return PopScope(
+          canPop: false,
+          child: AlertDialog(
+            backgroundColor: appBackground,
+            surfaceTintColor: Colors.transparent,
+            title: const Text(
+              'Allow Accessibility access?',
+              style: TextStyle(color: appText, fontWeight: FontWeight.w700),
+            ),
+            content: const Text(
+              'Tempus uses Accessibility to detect when supported apps or blocked websites open, read the on-screen app state needed for those rules, and show pause or blocking prompts. Tempus only uses this access for distraction blocking features.',
+              style: TextStyle(color: appMutedText, height: 1.5),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Not Now'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Agree and Continue'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _openUsageAccessSettings() async {
     try {
       await _accessibilityChannel.invokeMethod<void>('openUsageAccessSettings');
@@ -1119,7 +1165,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         onBackToHome: () {
           _fadeToTab(0);
         },
-        onOpenAccessibilitySettings: _openAccessibilitySettings,
+        onOpenAccessibilitySettings: _requestAccessibilityAccess,
         onOpenUsageAccessSettings: _openUsageAccessSettings,
         onShareApp: () {
           _shareText(
@@ -1182,7 +1228,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             _onboardingStep = OnboardingStep.enableAccessibility;
           });
         },
-        onOpenAccessibilitySettings: _openAccessibilitySettings,
+        onOpenAccessibilitySettings: _requestAccessibilityAccess,
         onContinueFromAccessibilitySuccess: () {
           setState(() {
             _allowOnboardingBackNavigation = false;

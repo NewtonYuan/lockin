@@ -137,7 +137,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       fit: StackFit.expand,
                       children: [
                         ...previousChildren,
-                        ...?currentChild == null ? null : [currentChild],
+                        ...?(currentChild == null ? null : [currentChild]),
                       ],
                     );
                   },
