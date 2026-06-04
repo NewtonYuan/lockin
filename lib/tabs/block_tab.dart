@@ -87,6 +87,8 @@ class BlockScreen extends StatelessWidget {
     required this.onToggleExpanded,
     required this.onToggleSetting,
     required this.onSelectTimeLimit,
+    required this.isAccessibilityAllowed,
+    required this.onOpenAccessibilitySettings,
   });
 
   final VoidCallback onBackToHome;
@@ -106,6 +108,8 @@ class BlockScreen extends StatelessWidget {
   final ValueChanged<String> onToggleExpanded;
   final void Function(String settingKey, bool value) onToggleSetting;
   final void Function(String settingKey, int? minutes) onSelectTimeLimit;
+  final bool isAccessibilityAllowed;
+  final VoidCallback onOpenAccessibilitySettings;
 
   @override
   Widget build(BuildContext context) {
@@ -139,7 +143,17 @@ class BlockScreen extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: 14),
+        if (!isAccessibilityAllowed) ...[
+          const SizedBox(height: 14),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: _AccessibilityErrorBanner(
+              onTap: onOpenAccessibilitySettings,
+            ),
+          ),
+          const SizedBox(height: 20),
+        ] else
+          const SizedBox(height: 14),
         Expanded(
           child: _CategoryPageView(
             selectedCategory: selectedCategory,
@@ -335,6 +349,71 @@ class BlockScreen extends StatelessWidget {
       (packageName) =>
           exactPackageNames.contains(packageName) ||
           packagePrefixes.any((prefix) => packageName.startsWith(prefix)),
+    );
+  }
+}
+
+class _AccessibilityErrorBanner extends StatelessWidget {
+  const _AccessibilityErrorBanner({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFFFF4F2),
+      borderRadius: BorderRadius.circular(8),
+      child: Ink(
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          splashColor: brand.withValues(alpha: 0.10),
+          highlightColor: appText.withValues(alpha: 0.03),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            child: Row(
+              children: [
+                SvgPicture.asset(
+                  'assets/icons/error.svg',
+                  width: 18,
+                  height: 18,
+                  colorFilter: const ColorFilter.mode(
+                    Color(0xFFC65A43),
+                    BlendMode.srcIn,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'Accessibility is off',
+                    style: TextStyle(
+                      color: Color(0xFFC65A43),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Text(
+                  'Fix',
+                  style: TextStyle(
+                    color: Color(0xFFC65A43),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFFC65A43),
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -980,7 +1059,7 @@ class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
                                 _selectedPauseOnOpen = value;
                               });
                             },
-                            activeColor: brand,
+                            activeThumbColor: brand,
                             inactiveThumbColor: appBackground,
                             inactiveTrackColor: appBorder,
                           ),
@@ -1959,7 +2038,7 @@ class _BlockItemRow extends StatelessWidget {
                     Switch(
                       value: item.value ?? false,
                       onChanged: onToggleChanged,
-                      activeColor: brand,
+                      activeThumbColor: brand,
                       inactiveThumbColor: appBackground,
                       inactiveTrackColor: appBorder,
                     ),

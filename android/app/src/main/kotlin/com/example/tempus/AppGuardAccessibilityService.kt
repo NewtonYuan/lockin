@@ -1,6 +1,7 @@
 package com.prestige.tempus
 
 import android.accessibilityservice.AccessibilityService
+import android.app.ActivityManager
 import android.app.AppOpsManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
@@ -1110,6 +1111,18 @@ class AppGuardAccessibilityService : AccessibilityService() {
     }
 
     private fun relaunchAppToForeground() {
+        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val existingTask = activityManager.appTasks.firstOrNull { appTask ->
+            appTask.taskInfo.baseIntent.component?.packageName == packageName
+        }
+        if (existingTask != null) {
+            runCatching {
+                existingTask.moveToFront()
+            }.onSuccess {
+                return
+            }
+        }
+
         val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)

@@ -1,5 +1,6 @@
 package com.prestige.tempus
 
+import android.app.ActivityManager
 import android.app.AppOpsManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
@@ -13,6 +14,8 @@ import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.os.Process
 import android.util.Base64
@@ -31,11 +34,35 @@ open class MainActivity : FlutterActivity() {
         const val ACCESSIBILITY_CHANNEL_NAME = "tempus/accessibility"
         private const val PENDING_SHARED_WEBSITE_PREF_KEY = "pending_shared_website"
         private const val ONBOARDING_COMPLETED_PREF_KEY = "onboarding_completed"
+        private const val USAGE_ACCESS_WATCH_INTERVAL_MILLIS = 500L
     }
 
     private val scrollDayStatusesPrefKey = "scroll_day_statuses"
     private val customTrackedAppsPrefKey = "custom_tracked_apps"
     private val appLoadingExecutor = Executors.newSingleThreadExecutor()
+    private val usageAccessWatcherHandler = Handler(Looper.getMainLooper())
+    private val usageAccessEnableWatcher = object : Runnable {
+        override fun run() {
+            val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            val awaitingEnable = prefs.getBoolean(
+                AppGuardAccessibilityService.AWAITING_USAGE_ACCESS_ENABLE_PREF_KEY,
+                false,
+            )
+            if (!awaitingEnable) return
+            if (isUsageAccessEnabled()) {
+                prefs.edit()
+                    .putBoolean(AppGuardAccessibilityService.AWAITING_USAGE_ACCESS_ENABLE_PREF_KEY, false)
+                    .putBoolean(AppGuardAccessibilityService.USAGE_ACCESS_ENABLED_SUCCESS_PREF_KEY, true)
+                    .apply()
+                relaunchAppToForeground()
+                return
+            }
+            usageAccessWatcherHandler.postDelayed(
+                this,
+                USAGE_ACCESS_WATCH_INTERVAL_MILLIS,
+            )
+        }
+    }
     private val builtInTrackedDailyTimeLimitKeys = listOf(
         "instagram_app",
         "youtube_app",
@@ -54,6 +81,11 @@ open class MainActivity : FlutterActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         handleIncomingShareIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        startUsageAccessEnableWatcherIfNeeded()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -76,7 +108,11 @@ open class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 "openUsageAccessSettings" -> {
-                    markAwaitingUsageAccessEnable()
+                    if (isUsageAccessEnabled()) {
+                        clearUsageAccessEnableWatch()
+                    } else {
+                        markAwaitingUsageAccessEnable()
+                    }
                     openUsageAccessSettings()
                     result.success(null)
                 }
@@ -301,6 +337,7 @@ open class MainActivity : FlutterActivity() {
             .putBoolean(AppGuardAccessibilityService.AWAITING_USAGE_ACCESS_ENABLE_PREF_KEY, true)
             .apply()
         AppGuardAccessibilityService.beginUsageAccessEnableWatch()
+        startUsageAccessEnableWatcherIfNeeded()
     }
 
     private fun consumeUsageAccessEnabledSuccess(): Boolean {
@@ -315,6 +352,47 @@ open class MainActivity : FlutterActivity() {
                 .apply()
         }
         return shouldShow
+    }
+
+    private fun startUsageAccessEnableWatcherIfNeeded() {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        val awaitingEnable = prefs.getBoolean(
+            AppGuardAccessibilityService.AWAITING_USAGE_ACCESS_ENABLE_PREF_KEY,
+            false,
+        )
+        if (!awaitingEnable) return
+        usageAccessWatcherHandler.removeCallbacks(usageAccessEnableWatcher)
+        usageAccessWatcherHandler.post(usageAccessEnableWatcher)
+    }
+
+    private fun clearUsageAccessEnableWatch() {
+        usageAccessWatcherHandler.removeCallbacks(usageAccessEnableWatcher)
+        getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(AppGuardAccessibilityService.AWAITING_USAGE_ACCESS_ENABLE_PREF_KEY, false)
+            .apply()
+    }
+
+    private fun relaunchAppToForeground() {
+        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val existingTask = activityManager.appTasks.firstOrNull { appTask ->
+            appTask.taskInfo.baseIntent.component?.packageName == packageName
+        }
+        if (existingTask != null) {
+            runCatching {
+                existingTask.moveToFront()
+            }.onSuccess {
+                return
+            }
+        }
+
+        val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        } ?: return
+
+        startActivity(intent)
     }
 
     private fun handleIncomingShareIntent(intent: Intent?) {
@@ -931,6 +1009,7 @@ open class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        usageAccessWatcherHandler.removeCallbacks(usageAccessEnableWatcher)
         appLoadingExecutor.shutdownNow()
         super.onDestroy()
     }
@@ -963,4 +1042,5 @@ open class MainActivity : FlutterActivity() {
             packagePrefixes = setOf("app.revanced.android.youtube"),
         ),
     )
+
 }

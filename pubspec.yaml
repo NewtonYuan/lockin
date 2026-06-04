@@ -66,6 +66,7 @@ flutter:
     - assets/icons/settings.svg
     - assets/icons/share.svg
     - assets/icons/notifications.svg
+    - assets/icons/error.svg
     - assets/icons/delete_forever.svg
     - assets/icons/install_day_star.svg
     - assets/icons/help.svg

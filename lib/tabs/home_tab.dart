@@ -25,6 +25,10 @@ class HomeOverview extends StatelessWidget {
     required this.onShareApp,
     required this.onPreviousMonth,
     required this.onNextMonth,
+    required this.isAccessibilityAllowed,
+    required this.isUsageAccessAllowed,
+    required this.onOpenAccessibilitySettings,
+    required this.onOpenUsageAccessSettings,
   });
 
   final DateTime trackerMonth;
@@ -40,6 +44,10 @@ class HomeOverview extends StatelessWidget {
   final VoidCallback onShareApp;
   final VoidCallback onPreviousMonth;
   final VoidCallback onNextMonth;
+  final bool isAccessibilityAllowed;
+  final bool isUsageAccessAllowed;
+  final VoidCallback onOpenAccessibilitySettings;
+  final VoidCallback onOpenUsageAccessSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -71,6 +79,26 @@ class HomeOverview extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(0, 16, 0, 20),
           sliver: SliverList(
             delegate: SliverChildListDelegate([
+              if (!isAccessibilityAllowed || !isUsageAccessAllowed)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Column(
+                    children: [
+                      if (!isAccessibilityAllowed)
+                        _PermissionErrorBanner(
+                          label: 'Accessibility is off',
+                          onTap: onOpenAccessibilitySettings,
+                        ),
+                      if (!isAccessibilityAllowed && !isUsageAccessAllowed)
+                        const SizedBox(height: 8),
+                      if (!isUsageAccessAllowed)
+                        _PermissionErrorBanner(
+                          label: 'Usage Access is off',
+                          onTap: onOpenUsageAccessSettings,
+                        ),
+                    ],
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Center(
@@ -133,6 +161,75 @@ class HomeOverview extends StatelessWidget {
         );
         return FadeTransition(opacity: curved, child: child);
       },
+    );
+  }
+}
+
+class _PermissionErrorBanner extends StatelessWidget {
+  const _PermissionErrorBanner({
+    required this.label,
+    required this.onTap,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFFFF4F2),
+      borderRadius: BorderRadius.circular(8),
+      child: Ink(
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          splashColor: brand.withValues(alpha: 0.10),
+          highlightColor: appText.withValues(alpha: 0.03),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            child: Row(
+              children: [
+                SvgPicture.asset(
+                  'assets/icons/error.svg',
+                  width: 18,
+                  height: 18,
+                  colorFilter: const ColorFilter.mode(
+                    Color(0xFFC65A43),
+                    BlendMode.srcIn,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: const TextStyle(
+                      color: Color(0xFFC65A43),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Text(
+                  'Fix',
+                  style: TextStyle(
+                    color: Color(0xFFC65A43),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFFC65A43),
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -321,14 +418,10 @@ class _AppIcon extends StatelessWidget {
 class _AssetIcon extends StatelessWidget {
   const _AssetIcon({
     required this.assetPath,
-    this.width,
-    this.height,
     this.fit = BoxFit.contain,
   });
 
   final String assetPath;
-  final double? width;
-  final double? height;
   final BoxFit fit;
 
   @override
@@ -336,12 +429,10 @@ class _AssetIcon extends StatelessWidget {
     if (assetPath.toLowerCase().endsWith('.svg')) {
       return SvgPicture.asset(
         assetPath,
-        width: width,
-        height: height,
         fit: fit,
       );
     }
-    return Image.asset(assetPath, width: width, height: height, fit: fit);
+    return Image.asset(assetPath, fit: fit);
   }
 }
 

@@ -92,6 +92,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool? _isAccessibilityEnabled;
   bool? _isUsageAccessEnabled;
   bool _bypassAccessibilityGate = false;
+  bool _skippedAccessibilityOnboarding = false;
+  bool _skippedUsageAccessOnboarding = false;
   bool _hasCompletedOnboarding = false;
   bool _hasLoadedOnboardingState = false;
   bool _allowOnboardingBackNavigation = false;
@@ -164,6 +166,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       setState(() {
         _isAccessibilityEnabled = enabled ?? false;
         if (_isAccessibilityEnabled == true) {
+          _skippedAccessibilityOnboarding = false;
           _bypassAccessibilityGate = false;
           if (previousValue == false) {
             _allowOnboardingBackNavigation = false;
@@ -214,18 +217,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _requestAccessibilityAccess() async {
-    if (_isAccessibilityEnabled == true) {
-      await _openAccessibilitySettings();
-      return;
-    }
-
-    final consented = await _showAccessibilityDisclosureDialog();
-    if (consented == true) {
-      await _openAccessibilitySettings();
-    }
-  }
-
   Future<bool?> _showAccessibilityDisclosureDialog() {
     return showModalBottomSheet<bool>(
       context: context,
@@ -239,6 +230,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             'Tempus uses Accessibility to detect when supported apps or blocked websites open, read the on-screen app state needed for those rules, and show pause or blocking prompts. Tempus only uses this access for distraction blocking features.',
       ),
     );
+  }
+
+  Future<void> _requestAccessibilityAccessForOnboarding() async {
+    if (_isAccessibilityEnabled == true) {
+      await _openAccessibilitySettings();
+      return;
+    }
+
+    final consented = await _showAccessibilityDisclosureDialog();
+    if (!mounted) return;
+    if (consented == true) {
+      await _openAccessibilitySettings();
+      return;
+    }
+    if (consented == null) {
+      return;
+    }
+
+    setState(() {
+      _allowOnboardingBackNavigation = false;
+      _skippedAccessibilityOnboarding = true;
+      _onboardingStep = OnboardingStep.trackDays;
+    });
   }
 
   Future<void> _openUsageAccessSettings() async {
@@ -276,6 +290,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             'Tempus uses Usage Access to measure app time, enforce daily limits, and track your distraction-free days.',
       ),
     );
+  }
+
+  Future<void> _requestUsageAccessForOnboarding() async {
+    if (_isUsageAccessEnabled == true) {
+      await _openUsageAccessSettings();
+      return;
+    }
+
+    final consented = await _showUsageAccessDisclosureDialog();
+    if (!mounted) return;
+    if (consented == true) {
+      await _openUsageAccessSettings();
+      return;
+    }
+    if (consented == null) {
+      return;
+    }
+
+    setState(() {
+      _allowOnboardingBackNavigation = false;
+      _skippedUsageAccessOnboarding = true;
+      _onboardingStep = OnboardingStep.allDone;
+    });
   }
 
   Future<void> _openWebsite(String url) async {
@@ -338,6 +375,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() {
         _isUsageAccessEnabled = enabled ?? false;
+        if (_isUsageAccessEnabled == true) {
+          _skippedUsageAccessOnboarding = false;
+        }
         if (_isUsageAccessEnabled == true &&
             _isAccessibilityEnabled == true &&
             !_hasCompletedOnboarding) {
@@ -1053,6 +1093,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         onShareApp: () {
           _shareText(_shareAppMessage());
         },
+        isAccessibilityAllowed: _isAccessibilityEnabled == true,
+        isUsageAccessAllowed: _isUsageAccessEnabled == true,
+        onOpenAccessibilitySettings: _requestAccessibilityAccessForOnboarding,
+        onOpenUsageAccessSettings: _requestUsageAccess,
         onPreviousMonth: () {
           if (!_canShowPreviousTrackerMonth) return;
           setState(() {
@@ -1163,6 +1207,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           });
           _setNativeDailyTimeLimit(settingKey, minutes);
         },
+        isAccessibilityAllowed: _isAccessibilityEnabled == true,
+        onOpenAccessibilitySettings: _requestAccessibilityAccessForOnboarding,
       ),
       StatisticsTab(
         onBackToHome: () {
@@ -1173,7 +1219,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         onBackToHome: () {
           _fadeToTab(0);
         },
-        onOpenAccessibilitySettings: _requestAccessibilityAccess,
+        onOpenAccessibilitySettings: _requestAccessibilityAccessForOnboarding,
         onOpenUsageAccessSettings: _requestUsageAccess,
         onShareApp: () {
           _shareText(
@@ -1236,7 +1282,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             _onboardingStep = OnboardingStep.enableAccessibility;
           });
         },
-        onOpenAccessibilitySettings: _requestAccessibilityAccess,
+        onOpenAccessibilitySettings: _requestAccessibilityAccessForOnboarding,
         onContinueFromAccessibilitySuccess: () {
           setState(() {
             _allowOnboardingBackNavigation = false;
@@ -1250,7 +1296,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           });
         },
         onOpenUsageAccessSettings: () async {
-          await _requestUsageAccess();
+          await _requestUsageAccessForOnboarding();
           if (!mounted) return;
           if (_isUsageAccessEnabled == true) {
             setState(() {
@@ -1310,6 +1356,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return OnboardingStep.allDone;
     }
     if (_isAccessibilityEnabled != true &&
+        !_skippedAccessibilityOnboarding &&
         _onboardingStep.index > OnboardingStep.enableAccessibility.index) {
       return OnboardingStep.enableAccessibility;
     }
@@ -1319,6 +1366,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
     if (_isAccessibilityEnabled == true &&
         _isUsageAccessEnabled != true &&
+        !_skippedUsageAccessOnboarding &&
         _onboardingStep == OnboardingStep.allDone) {
       return OnboardingStep.enableUsageAccess;
     }
