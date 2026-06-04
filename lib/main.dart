@@ -106,6 +106,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   List<CustomTrackedApp> _customTrackedApps = const [];
   final List<BlockedWebsiteEntry> _blockedWebsites = [];
   String _blockCategory = 'Apps';
+  int _pauseDurationSeconds = 5;
   final Set<String> _expandedApps = {};
   final Map<String, int?> _dailyTimeLimits = {
     'instagram_app': null,
@@ -441,8 +442,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           savedConfig['blockedWebsites'] as List<dynamic>?;
       final rawCustomTrackedApps =
           savedConfig['customTrackedApps'] as List<dynamic>?;
+      final rawPauseDurationSeconds = savedConfig['pauseDurationSeconds'];
 
       setState(() {
+        if (rawPauseDurationSeconds is int && rawPauseDurationSeconds > 0) {
+          _pauseDurationSeconds = rawPauseDurationSeconds;
+        }
         if (rawCustomTrackedApps != null) {
           _customTrackedApps = rawCustomTrackedApps
               .whereType<Map>()
@@ -569,6 +574,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               },
             )
             .toList(),
+      });
+    } on PlatformException {
+      // Android-only persistence. Other platforms keep local UI state only.
+    } on MissingPluginException {
+      // Android-only persistence. Other platforms keep local UI state only.
+    }
+  }
+
+  Future<void> _setNativePauseDurationSeconds(int seconds) async {
+    try {
+      await _accessibilityChannel.invokeMethod<void>('setPauseDurationSeconds', {
+        'seconds': seconds,
       });
     } on PlatformException {
       // Android-only persistence. Other platforms keep local UI state only.
@@ -1206,6 +1223,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             _dailyTimeLimits[settingKey] = minutes;
           });
           _setNativeDailyTimeLimit(settingKey, minutes);
+        },
+        pauseDurationSeconds: _pauseDurationSeconds,
+        onPauseDurationChanged: (seconds) {
+          setState(() {
+            _pauseDurationSeconds = seconds;
+          });
+          _setNativePauseDurationSeconds(seconds);
         },
         isAccessibilityAllowed: _isAccessibilityEnabled == true,
         onOpenAccessibilitySettings: _requestAccessibilityAccessForOnboarding,

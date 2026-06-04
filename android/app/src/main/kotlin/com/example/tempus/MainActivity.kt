@@ -169,6 +169,15 @@ open class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                 }
+                "setPauseDurationSeconds" -> {
+                    val seconds = call.argument<Int>("seconds")
+                    if (seconds == null) {
+                        result.error("missing_pause_duration_seconds", "seconds is required", null)
+                    } else {
+                        setPauseDurationSeconds(seconds)
+                        result.success(null)
+                    }
+                }
                 "getSavedBlockConfig" -> {
                     result.success(getSavedBlockConfig())
                 }
@@ -787,6 +796,14 @@ open class MainActivity : FlutterActivity() {
             .apply()
     }
 
+    private fun setPauseDurationSeconds(seconds: Int) {
+        val sanitizedSeconds = seconds.coerceIn(0, 15)
+        getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(AppGuardAccessibilityService.PAUSE_DURATION_SECONDS_PREF_KEY, sanitizedSeconds)
+            .apply()
+    }
+
     private fun getSavedBlockConfig(): Map<String, Any> {
         val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
         val dailyTimeLimits = getTrackedDailyTimeLimitKeys().associateWith { key ->
@@ -802,6 +819,10 @@ open class MainActivity : FlutterActivity() {
         return mapOf(
             "dailyTimeLimits" to dailyTimeLimits,
             "blockSettings" to blockSettings,
+            "pauseDurationSeconds" to prefs.getInt(
+                AppGuardAccessibilityService.PAUSE_DURATION_SECONDS_PREF_KEY,
+                AppGuardAccessibilityService.DEFAULT_PAUSE_DURATION_SECONDS,
+            ),
             "scrollDayStatuses" to scrollDayStatuses,
             "blockedWebsites" to blockedWebsites,
             "customTrackedApps" to customTrackedApps,

@@ -87,6 +87,8 @@ class BlockScreen extends StatelessWidget {
     required this.onToggleExpanded,
     required this.onToggleSetting,
     required this.onSelectTimeLimit,
+    required this.pauseDurationSeconds,
+    required this.onPauseDurationChanged,
     required this.isAccessibilityAllowed,
     required this.onOpenAccessibilitySettings,
   });
@@ -108,6 +110,8 @@ class BlockScreen extends StatelessWidget {
   final ValueChanged<String> onToggleExpanded;
   final void Function(String settingKey, bool value) onToggleSetting;
   final void Function(String settingKey, int? minutes) onSelectTimeLimit;
+  final int pauseDurationSeconds;
+  final ValueChanged<int> onPauseDurationChanged;
   final bool isAccessibilityAllowed;
   final VoidCallback onOpenAccessibilitySettings;
 
@@ -122,6 +126,18 @@ class BlockScreen extends StatelessWidget {
             title: 'Block',
             onBack: onBackToHome,
             centerTitle: false,
+            trailing: IconButton(
+              onPressed: () => _showBlockSettingsSheet(context),
+              icon: SvgPicture.asset(
+                'assets/icons/settings.svg',
+                width: 27,
+                height: 27,
+                colorFilter: const ColorFilter.mode(appText, BlendMode.srcIn),
+              ),
+              splashRadius: 20,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            ),
           ),
         ),
         Padding(
@@ -303,6 +319,18 @@ class BlockScreen extends StatelessWidget {
     return children;
   }
 
+  Future<void> _showBlockSettingsSheet(BuildContext context) async {
+    await showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _BlockSettingsSheet(
+        pauseDurationSeconds: pauseDurationSeconds,
+        onPauseDurationChanged: onPauseDurationChanged,
+      ),
+    );
+  }
+
   Future<void> _promptForInstalledApp(BuildContext context) async {
     final existingPackages = <String>{
       'com.instagram.android',
@@ -351,6 +379,213 @@ class BlockScreen extends StatelessWidget {
           packagePrefixes.any((prefix) => packageName.startsWith(prefix)),
     );
   }
+}
+
+class _BlockSettingsSheet extends StatefulWidget {
+  const _BlockSettingsSheet({
+    required this.pauseDurationSeconds,
+    required this.onPauseDurationChanged,
+  });
+
+  final int pauseDurationSeconds;
+  final ValueChanged<int> onPauseDurationChanged;
+
+  @override
+  State<_BlockSettingsSheet> createState() => _BlockSettingsSheetState();
+}
+
+class _BlockSettingsSheetState extends State<_BlockSettingsSheet> {
+  late int _pauseDurationSeconds = widget.pauseDurationSeconds;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 24, 12, 12),
+        child: Material(
+          color: appBackground,
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: appBorder,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Block Settings',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: appText,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 14),
+                Material(
+                  color: appSurface,
+                  borderRadius: BorderRadius.circular(8),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () async {
+                      final selected = await _showPauseDurationPicker(
+                        context,
+                        initialSeconds: _pauseDurationSeconds,
+                      );
+                      if (!mounted || selected == null) return;
+                      setState(() {
+                        _pauseDurationSeconds = selected;
+                      });
+                      widget.onPauseDurationChanged(selected);
+                    },
+                    child: SizedBox(
+                      height: 52,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Pause duration',
+                                style: TextStyle(
+                                  color: appText,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              _pauseDurationSeconds == 1
+                                  ? '1 second'
+                                  : '$_pauseDurationSeconds seconds',
+                              style: const TextStyle(
+                                color: appMutedText,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(
+                              Icons.chevron_right_rounded,
+                              color: appMutedText,
+                              size: 20,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<int?> _showPauseDurationPicker(
+  BuildContext context, {
+  required int initialSeconds,
+}) async {
+  final values = List<int>.generate(16, (index) => index);
+  var selectedSeconds = initialSeconds.clamp(0, 15);
+  final controller = FixedExtentScrollController(initialItem: selectedSeconds);
+
+  final selected = await showModalBottomSheet<int>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (dialogContext) {
+      return StatefulBuilder(
+        builder: (context, setState) {
+          return SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 24, 12, 12),
+              child: Material(
+                color: appBackground,
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 42,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: appBorder,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Pause duration',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              color: appText,
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        height: 180,
+                        child: _DurationWheel(
+                          controller: controller,
+                          values: values,
+                          labelBuilder: (value) =>
+                              value == 1 ? '1 second' : '$value seconds',
+                          onSelectedItemChanged: (value) {
+                            setState(() {
+                              selectedSeconds = value;
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextButton(
+                              onPressed: () => Navigator.of(dialogContext).pop(),
+                              child: const Text('Cancel'),
+                            ),
+                          ),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(selectedSeconds),
+                              child: const Text('Save'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+
+  controller.dispose();
+  return selected;
 }
 
 class _AccessibilityErrorBanner extends StatelessWidget {

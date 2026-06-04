@@ -1,6 +1,7 @@
 package com.prestige.tempus
 
 import android.app.Activity
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -264,10 +265,18 @@ class WebsiteBlockActivity : Activity() {
         enabledLabel: String,
     ) {
         bypassCountdown?.cancel()
+
+        val bypassDelayMs = resolveBypassDelayMs()
+        if (bypassDelayMs <= 0L) {
+            button.text = enabledLabel
+            button.isEnabled = true
+            button.alpha = 1f
+            return
+        }
+
         button.isEnabled = false
         button.alpha = 0.55f
-
-        bypassCountdown = object : CountDownTimer(BYPASS_DELAY_MS, 1000L) {
+        bypassCountdown = object : CountDownTimer(bypassDelayMs, 1000L) {
             override fun onTick(millisUntilFinished: Long) {
                 val secondsRemaining = ((millisUntilFinished + 999L) / 1000L).toInt()
                 button.text = "$enabledLabel (${secondsRemaining}s)"
@@ -400,7 +409,15 @@ class WebsiteBlockActivity : Activity() {
         const val BRAND = 0xFF00688F.toInt()
         const val BRAND_PRESSED = 0xFF00A6D6.toInt()
         private const val PROMPT_PANEL_TAG = "prompt_panel"
-        private const val BYPASS_DELAY_MS = 5_000L
         private const val BYPASS_BUTTON_TAG = "bypass_button"
+    }
+
+    private fun resolveBypassDelayMs(): Long {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        val seconds = prefs.getInt(
+            AppGuardAccessibilityService.PAUSE_DURATION_SECONDS_PREF_KEY,
+            AppGuardAccessibilityService.DEFAULT_PAUSE_DURATION_SECONDS,
+        ).coerceIn(0, 15)
+        return seconds * 1_000L
     }
 }

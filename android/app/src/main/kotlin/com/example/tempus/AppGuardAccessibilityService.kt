@@ -803,6 +803,8 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val CUSTOM_TRACKED_APPS_PREF_KEY = "custom_tracked_apps"
         const val BLOCKED_WEBSITES_PREF_KEY = "blocked_websites"
         const val SHORT_FORM_BYPASS_WINDOWS_PREF_KEY = "short_form_bypass_windows"
+        const val PAUSE_DURATION_SECONDS_PREF_KEY = "pause_duration_seconds"
+        const val DEFAULT_PAUSE_DURATION_SECONDS = 5
         const val TEN_SECOND_LIMIT_VALUE = -10
         const val AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY = "awaiting_accessibility_enable"
         const val ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY = "accessibility_enabled_success"
