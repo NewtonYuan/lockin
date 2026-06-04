@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.os.CountDownTimer
 import android.os.Bundle
 import android.text.SpannableString
 import android.text.Spanned
@@ -24,6 +25,7 @@ import android.widget.TextView
 
 class PauseOnOpenActivity : Activity() {
     private val minuteOptions = intArrayOf(1, 3, 5, 10, 15, 30, 45, 60)
+    private var bypassCountdown: CountDownTimer? = null
 
     private val sourcePackageName: String?
         get() = intent?.getStringExtra(EXTRA_SOURCE_PACKAGE_NAME)
@@ -46,6 +48,8 @@ class PauseOnOpenActivity : Activity() {
     }
 
     private fun createPromptView(): FrameLayout {
+        val bypassButton = Button(this)
+
         return promptFrame().apply {
             addView(promptPanel().apply {
                 addView(
@@ -84,7 +88,8 @@ class PauseOnOpenActivity : Activity() {
                 )
 
                 addView(
-                    Button(context).apply {
+                    bypassButton.apply {
+                        tag = BYPASS_BUTTON_TAG
                         text = "I do"
                         setTextColor(BRAND)
                         textSize = 16f
@@ -230,6 +235,7 @@ class PauseOnOpenActivity : Activity() {
     }
 
     override fun onDestroy() {
+        bypassCountdown?.cancel()
         AppGuardAccessibilityService.dismissPrompt()
         super.onDestroy()
     }
@@ -255,13 +261,42 @@ class PauseOnOpenActivity : Activity() {
     }
 
     private fun setPromptContent(view: View) {
+        bypassCountdown?.cancel()
         setContentView(view)
+        val bypassButton = view.findViewWithTag<Button>(BYPASS_BUTTON_TAG)
+        if (bypassButton != null) {
+            view.post {
+                startBypassDelay(bypassButton, "I do")
+            }
+        }
         val panel = (view as? ViewGroup)?.findViewWithTag<View>(PROMPT_PANEL_TAG) ?: view
         panel.alpha = 0f
         panel.animate()
             .alpha(1f)
             .setDuration(140L)
             .start()
+    }
+
+    private fun startBypassDelay(
+        button: Button,
+        enabledLabel: String,
+    ) {
+        bypassCountdown?.cancel()
+        button.isEnabled = false
+        button.alpha = 0.55f
+
+        bypassCountdown = object : CountDownTimer(BYPASS_DELAY_MS, 1000L) {
+            override fun onTick(millisUntilFinished: Long) {
+                val secondsRemaining = ((millisUntilFinished + 999L) / 1000L).toInt()
+                button.text = "$enabledLabel (${secondsRemaining}s)"
+            }
+
+            override fun onFinish() {
+                button.text = enabledLabel
+                button.isEnabled = true
+                button.alpha = 1f
+            }
+        }.start()
     }
 
     private fun buttonLayoutParams(topMargin: Int = 0): LinearLayout.LayoutParams {
@@ -472,5 +507,7 @@ class PauseOnOpenActivity : Activity() {
         private const val REVANCED_YOUTUBE_PREFIX = "app.revanced.android.youtube"
         private const val INSTAGRAM_APP_LIMIT_SETTING_KEY = "instagram_app"
         private const val YOUTUBE_APP_LIMIT_SETTING_KEY = "youtube_app"
+        private const val BYPASS_DELAY_MS = 5_000L
+        private const val BYPASS_BUTTON_TAG = "bypass_button"
     }
 }

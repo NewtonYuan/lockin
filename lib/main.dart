@@ -227,36 +227,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<bool?> _showAccessibilityDisclosureDialog() {
-    return showDialog<bool>(
+    return showModalBottomSheet<bool>(
       context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return PopScope(
-          canPop: false,
-          child: AlertDialog(
-            backgroundColor: appBackground,
-            surfaceTintColor: Colors.transparent,
-            title: const Text(
-              'Allow Accessibility access?',
-              style: TextStyle(color: appText, fontWeight: FontWeight.w700),
-            ),
-            content: const Text(
-              'Tempus uses Accessibility to detect when supported apps or blocked websites open, read the on-screen app state needed for those rules, and show pause or blocking prompts. Tempus only uses this access for distraction blocking features.',
-              style: TextStyle(color: appMutedText, height: 1.5),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Not Now'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Agree and Continue'),
-              ),
-            ],
-          ),
-        );
-      },
+      isScrollControlled: true,
+      isDismissible: true,
+      enableDrag: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const _PermissionDisclosureSheet(
+        title: 'Allow Accessibility?',
+        description:
+            'Tempus uses Accessibility to detect when supported apps or blocked websites open, read the on-screen app state needed for those rules, and show pause or blocking prompts. Tempus only uses this access for distraction blocking features.',
+      ),
     );
   }
 
@@ -268,6 +249,33 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } on MissingPluginException {
       // Android-only setup. Other platforms can still render the app shell.
     }
+  }
+
+  Future<void> _requestUsageAccess() async {
+    if (_isUsageAccessEnabled == true) {
+      await _openUsageAccessSettings();
+      return;
+    }
+
+    final consented = await _showUsageAccessDisclosureDialog();
+    if (consented == true) {
+      await _openUsageAccessSettings();
+    }
+  }
+
+  Future<bool?> _showUsageAccessDisclosureDialog() {
+    return showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: true,
+      enableDrag: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const _PermissionDisclosureSheet(
+        title: 'Allow Usage Access?',
+        description:
+            'Tempus uses Usage Access to measure app time, enforce daily limits, and track your distraction-free days.',
+      ),
+    );
   }
 
   Future<void> _openWebsite(String url) async {
@@ -1166,7 +1174,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _fadeToTab(0);
         },
         onOpenAccessibilitySettings: _requestAccessibilityAccess,
-        onOpenUsageAccessSettings: _openUsageAccessSettings,
+        onOpenUsageAccessSettings: _requestUsageAccess,
         onShareApp: () {
           _shareText(
             'Tempus helps me spend less time scrolling. Join me on Tempus: '
@@ -1242,7 +1250,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           });
         },
         onOpenUsageAccessSettings: () async {
-          await _openUsageAccessSettings();
+          await _requestUsageAccess();
           if (!mounted) return;
           if (_isUsageAccessEnabled == true) {
             setState(() {
@@ -1336,6 +1344,118 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       case OnboardingStep.allDone:
         return OnboardingStep.enableUsageAccess;
     }
+  }
+}
+
+class _PermissionDisclosureSheet extends StatelessWidget {
+  const _PermissionDisclosureSheet({
+    required this.title,
+    required this.description,
+  });
+
+  final String title;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 24, 12, 12),
+        child: Material(
+          color: appBackground,
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: appBorder,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Image.asset(
+                        'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png',
+                        width: 32,
+                        height: 32,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          color: appText,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  description,
+                  style: const TextStyle(
+                    color: appMutedText,
+                    fontSize: 15,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                          side: const BorderSide(color: appBorder),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text('Not Now'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Center(
+                          child: Text(
+                            'Agree and Continue',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

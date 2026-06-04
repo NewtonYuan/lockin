@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.os.CountDownTimer
 import android.os.Bundle
 import android.text.SpannableString
 import android.text.Spanned
@@ -21,6 +22,7 @@ import android.widget.TextView
 
 class ConfirmBlockerActivity : Activity() {
     private val minuteOptions = intArrayOf(1, 2, 3, 5, 10, 15, 30, 60)
+    private var bypassCountdown: CountDownTimer? = null
 
     private val target: String
         get() = intent?.getStringExtra(EXTRA_TARGET) ?: TARGET_INSTAGRAM
@@ -52,6 +54,8 @@ class ConfirmBlockerActivity : Activity() {
     }
 
     private fun createConfirmationView(): FrameLayout {
+        val bypassButton = Button(this)
+
         return promptFrame().apply {
             addView(promptPanel().apply {
                 addView(
@@ -90,7 +94,8 @@ class ConfirmBlockerActivity : Activity() {
                 )
 
                 addView(
-                    Button(context).apply {
+                    bypassButton.apply {
+                        tag = BYPASS_BUTTON_TAG
                         text = "Bypass this time"
                         setTextColor(BRAND)
                         textSize = 16f
@@ -220,6 +225,7 @@ class ConfirmBlockerActivity : Activity() {
     }
 
     override fun onDestroy() {
+        bypassCountdown?.cancel()
         AppGuardAccessibilityService.dismissPrompt()
         super.onDestroy()
     }
@@ -245,13 +251,42 @@ class ConfirmBlockerActivity : Activity() {
     }
 
     private fun setPromptContent(view: View) {
+        bypassCountdown?.cancel()
         setContentView(view)
+        val bypassButton = view.findViewWithTag<Button>(BYPASS_BUTTON_TAG)
+        if (bypassButton != null) {
+            view.post {
+                startBypassDelay(bypassButton, "Bypass this time")
+            }
+        }
         val panel = (view as? ViewGroup)?.findViewWithTag<View>(PROMPT_PANEL_TAG) ?: view
         panel.alpha = 0f
         panel.animate()
             .alpha(1f)
             .setDuration(140L)
             .start()
+    }
+
+    private fun startBypassDelay(
+        button: Button,
+        enabledLabel: String,
+    ) {
+        bypassCountdown?.cancel()
+        button.isEnabled = false
+        button.alpha = 0.55f
+
+        bypassCountdown = object : CountDownTimer(BYPASS_DELAY_MS, 1000L) {
+            override fun onTick(millisUntilFinished: Long) {
+                val secondsRemaining = ((millisUntilFinished + 999L) / 1000L).toInt()
+                button.text = "$enabledLabel (${secondsRemaining}s)"
+            }
+
+            override fun onFinish() {
+                button.text = enabledLabel
+                button.isEnabled = true
+                button.alpha = 1f
+            }
+        }.start()
     }
 
     private fun buttonLayoutParams(topMargin: Int = 0): LinearLayout.LayoutParams {
@@ -375,5 +410,7 @@ class ConfirmBlockerActivity : Activity() {
         const val BRAND = 0xFF00688F.toInt()
         const val BRAND_PRESSED = 0xFF00A6D6.toInt()
         private const val PROMPT_PANEL_TAG = "prompt_panel"
+        private const val BYPASS_DELAY_MS = 5_000L
+        private const val BYPASS_BUTTON_TAG = "bypass_button"
     }
 }
