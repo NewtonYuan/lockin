@@ -218,6 +218,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _requestAccessibilityAccess() async {
+    if (_isAccessibilityEnabled == true) {
+      await _openAccessibilitySettings();
+      return;
+    }
+
+    final consented = await _showAccessibilityDisclosureDialog();
+    if (consented == true) {
+      await _openAccessibilitySettings();
+    }
+  }
+
   Future<bool?> _showAccessibilityDisclosureDialog() {
     return showModalBottomSheet<bool>(
       context: context,
@@ -1112,7 +1124,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         },
         isAccessibilityAllowed: _isAccessibilityEnabled == true,
         isUsageAccessAllowed: _isUsageAccessEnabled == true,
-        onOpenAccessibilitySettings: _requestAccessibilityAccessForOnboarding,
+        onOpenAccessibilitySettings: _requestAccessibilityAccess,
         onOpenUsageAccessSettings: _requestUsageAccess,
         onPreviousMonth: () {
           if (!_canShowPreviousTrackerMonth) return;
@@ -1232,7 +1244,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _setNativePauseDurationSeconds(seconds);
         },
         isAccessibilityAllowed: _isAccessibilityEnabled == true,
-        onOpenAccessibilitySettings: _requestAccessibilityAccessForOnboarding,
+        onOpenAccessibilitySettings: _requestAccessibilityAccess,
       ),
       StatisticsTab(
         onBackToHome: () {
@@ -1243,7 +1255,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         onBackToHome: () {
           _fadeToTab(0);
         },
-        onOpenAccessibilitySettings: _requestAccessibilityAccessForOnboarding,
+        onOpenAccessibilitySettings: _requestAccessibilityAccess,
         onOpenUsageAccessSettings: _requestUsageAccess,
         onShareApp: () {
           _shareText(

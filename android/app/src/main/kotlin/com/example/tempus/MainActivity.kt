@@ -34,12 +34,36 @@ open class MainActivity : FlutterActivity() {
         const val ACCESSIBILITY_CHANNEL_NAME = "tempus/accessibility"
         private const val PENDING_SHARED_WEBSITE_PREF_KEY = "pending_shared_website"
         private const val ONBOARDING_COMPLETED_PREF_KEY = "onboarding_completed"
+        private const val ACCESSIBILITY_WATCH_INTERVAL_MILLIS = 500L
         private const val USAGE_ACCESS_WATCH_INTERVAL_MILLIS = 500L
     }
 
     private val scrollDayStatusesPrefKey = "scroll_day_statuses"
     private val customTrackedAppsPrefKey = "custom_tracked_apps"
     private val appLoadingExecutor = Executors.newSingleThreadExecutor()
+    private val accessibilityWatcherHandler = Handler(Looper.getMainLooper())
+    private val accessibilityEnableWatcher = object : Runnable {
+        override fun run() {
+            val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            val awaitingEnable = prefs.getBoolean(
+                AppGuardAccessibilityService.AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY,
+                false,
+            )
+            if (!awaitingEnable) return
+            if (isAccessibilityServiceEnabled()) {
+                prefs.edit()
+                    .putBoolean(AppGuardAccessibilityService.AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY, false)
+                    .putBoolean(AppGuardAccessibilityService.ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY, true)
+                    .apply()
+                relaunchAppToForeground()
+                return
+            }
+            accessibilityWatcherHandler.postDelayed(
+                this,
+                ACCESSIBILITY_WATCH_INTERVAL_MILLIS,
+            )
+        }
+    }
     private val usageAccessWatcherHandler = Handler(Looper.getMainLooper())
     private val usageAccessEnableWatcher = object : Runnable {
         override fun run() {
@@ -85,6 +109,7 @@ open class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        startAccessibilityEnableWatcherIfNeeded()
         startUsageAccessEnableWatcherIfNeeded()
     }
 
@@ -103,8 +128,16 @@ open class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "openAccessibilitySettings" -> {
-                    markAwaitingAccessibilityEnable()
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    if (isAccessibilityServiceEnabled()) {
+                        clearAccessibilityEnableWatch()
+                    } else {
+                        markAwaitingAccessibilityEnable()
+                    }
+                    startActivity(
+                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        },
+                    )
                     result.success(null)
                 }
                 "openUsageAccessSettings" -> {
@@ -324,6 +357,7 @@ open class MainActivity : FlutterActivity() {
             .edit()
             .putBoolean(AppGuardAccessibilityService.AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY, true)
             .apply()
+        startAccessibilityEnableWatcherIfNeeded()
     }
 
     private fun consumeAccessibilityEnabledSuccess(): Boolean {
@@ -372,6 +406,25 @@ open class MainActivity : FlutterActivity() {
         if (!awaitingEnable) return
         usageAccessWatcherHandler.removeCallbacks(usageAccessEnableWatcher)
         usageAccessWatcherHandler.post(usageAccessEnableWatcher)
+    }
+
+    private fun startAccessibilityEnableWatcherIfNeeded() {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        val awaitingEnable = prefs.getBoolean(
+            AppGuardAccessibilityService.AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY,
+            false,
+        )
+        if (!awaitingEnable) return
+        accessibilityWatcherHandler.removeCallbacks(accessibilityEnableWatcher)
+        accessibilityWatcherHandler.post(accessibilityEnableWatcher)
+    }
+
+    private fun clearAccessibilityEnableWatch() {
+        accessibilityWatcherHandler.removeCallbacks(accessibilityEnableWatcher)
+        getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(AppGuardAccessibilityService.AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY, false)
+            .apply()
     }
 
     private fun clearUsageAccessEnableWatch() {
@@ -1030,6 +1083,7 @@ open class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        accessibilityWatcherHandler.removeCallbacks(accessibilityEnableWatcher)
         usageAccessWatcherHandler.removeCallbacks(usageAccessEnableWatcher)
         appLoadingExecutor.shutdownNow()
         super.onDestroy()
