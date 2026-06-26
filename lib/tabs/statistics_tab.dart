@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-
 import '../brand.dart';
 import 'sticky_header.dart';
 
@@ -53,18 +51,18 @@ class _PlaceholderTab extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SvgPicture.asset(
-                    'assets/images/statistics_coming_soon.svg',
-                    width: 220,
-                    height: 220,
+                  Image.asset(
+                    'assets/images/maintenance_cuate.png',
+                    width: 260,
+                    fit: BoxFit.contain,
                   ),
                   const SizedBox(height: 14),
                   Text(
-                    'Coming Soon!',
+                    'Under Development...',
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       color: appText,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w400,
                     ),
                   ),
                 ],

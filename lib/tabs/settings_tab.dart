@@ -11,6 +11,7 @@ class SettingsTab extends StatelessWidget {
     required this.onOpenUsageAccessSettings,
     required this.onShareApp,
     required this.onLeaveReview,
+    required this.onSendFeedback,
     required this.onOpenPrivacyPolicy,
     required this.isAccessibilityAllowed,
     required this.isUsageAccessAllowed,
@@ -21,6 +22,7 @@ class SettingsTab extends StatelessWidget {
   final VoidCallback onOpenUsageAccessSettings;
   final VoidCallback onShareApp;
   final VoidCallback onLeaveReview;
+  final VoidCallback onSendFeedback;
   final VoidCallback onOpenPrivacyPolicy;
   final bool isAccessibilityAllowed;
   final bool isUsageAccessAllowed;
@@ -78,6 +80,12 @@ class SettingsTab extends StatelessWidget {
                     onTap: onLeaveReview,
                   ),
                   _SettingsRow(
+                    icon: Icons.mail_outline_rounded,
+                    title: 'Report an Issue',
+                    value: '',
+                    onTap: onSendFeedback,
+                  ),
+                  _SettingsRow(
                     icon: Icons.privacy_tip_outlined,
                     title: 'Privacy Policy',
                     value: '',
@@ -86,7 +94,7 @@ class SettingsTab extends StatelessWidget {
                   const _SettingsRow(
                     icon: Icons.info_outline_rounded,
                     title: 'Version',
-                    value: '0.1.2',
+                    value: '0.2.4',
                     showChevron: false,
                   ),
                 ],

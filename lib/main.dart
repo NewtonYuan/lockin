@@ -1119,6 +1119,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             },
           );
         },
+        onOpenRestrictedApps: () {
+          _selectTab(
+            1,
+            update: () {
+              _expandedApps.removeAll({'Instagram', 'YouTube'});
+            },
+          );
+        },
         onShareApp: () {
           _shareText(_shareAppMessage());
         },
@@ -1266,6 +1274,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         onLeaveReview: () {
           _openWebsite(
             'https://play.google.com/store/apps/details?id=com.prestige.tempus',
+          );
+        },
+        onSendFeedback: () {
+          _openWebsite(
+            'mailto:prestigesoftwarelabs@gmail.com?subject=Tempus%20Issue%20Report',
           );
         },
         onOpenPrivacyPolicy: () {

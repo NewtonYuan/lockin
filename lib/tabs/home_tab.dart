@@ -22,6 +22,7 @@ class HomeOverview extends StatelessWidget {
     required this.canShowPreviousMonth,
     required this.canShowNextMonth,
     required this.onOpenBlockedShorts,
+    required this.onOpenRestrictedApps,
     required this.onShareApp,
     required this.onPreviousMonth,
     required this.onNextMonth,
@@ -41,6 +42,7 @@ class HomeOverview extends StatelessWidget {
   final bool canShowPreviousMonth;
   final bool canShowNextMonth;
   final VoidCallback onOpenBlockedShorts;
+  final VoidCallback onOpenRestrictedApps;
   final VoidCallback onShareApp;
   final VoidCallback onPreviousMonth;
   final VoidCallback onNextMonth;
@@ -110,6 +112,7 @@ class HomeOverview extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _HomeShortcutCardsRow(
                   onOpenBlockedShorts: onOpenBlockedShorts,
+                  onOpenRestrictedApps: onOpenRestrictedApps,
                   blockSettings: blockSettings,
                   dailyTimeLimits: dailyTimeLimits,
                   customTrackedApps: customTrackedApps,
@@ -544,12 +547,14 @@ class _BlockedShortsTrail extends StatelessWidget {
 class _HomeShortcutCardsRow extends StatelessWidget {
   const _HomeShortcutCardsRow({
     required this.onOpenBlockedShorts,
+    required this.onOpenRestrictedApps,
     required this.blockSettings,
     required this.dailyTimeLimits,
     required this.customTrackedApps,
   });
 
   final VoidCallback onOpenBlockedShorts;
+  final VoidCallback onOpenRestrictedApps;
   final Map<String, bool> blockSettings;
   final Map<String, int?> dailyTimeLimits;
   final List<CustomTrackedApp> customTrackedApps;
@@ -617,7 +622,7 @@ class _HomeShortcutCardsRow extends StatelessWidget {
                 child: _HomeShortcutCard(
                   title: 'Restricted',
                   titleStyle: titleStyle,
-                  onTap: onOpenBlockedShorts,
+                  onTap: onOpenRestrictedApps,
                   trailing: _ResponsiveRestrictedAppsTrail(
                     blockSettings: blockSettings,
                     dailyTimeLimits: dailyTimeLimits,
@@ -978,7 +983,7 @@ class _SegmentedRingPainter extends CustomPainter {
       final visibleStart = startAngle + (gap / 2);
       segmentPaint.color = segment.color;
       canvas.drawArc(rect, visibleStart, visibleSweep, false, segmentPaint);
-      if (segments.length > 1 && segment.appName.isNotEmpty) {
+      if (segment.appName.isNotEmpty) {
         _drawSegmentLabel(
           canvas: canvas,
           center: center,
