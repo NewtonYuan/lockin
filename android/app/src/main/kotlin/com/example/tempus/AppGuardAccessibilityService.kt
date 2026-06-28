@@ -272,6 +272,11 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
     private fun openInstagramPrompt() {
         promptActive = true
+        recordStatsEvent(
+            eventType = STATS_EVENT_REELS_BLOCK,
+            packageName = lastForegroundPackage ?: INSTAGRAM_PACKAGE_NAME,
+            target = TARGET_INSTAGRAM,
+        )
         showPromptActivity(
             target = TARGET_INSTAGRAM,
             sourcePackageName = lastForegroundPackage,
@@ -281,6 +286,11 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
     private fun openYouTubePrompt() {
         promptActive = true
+        recordStatsEvent(
+            eventType = STATS_EVENT_SHORTS_BLOCK,
+            packageName = lastForegroundPackage ?: YOUTUBE_PACKAGE_NAME,
+            target = TARGET_YOUTUBE,
+        )
         pauseYouTubeShortsPlayback(lastForegroundPackage)
         showPromptActivity(
             target = TARGET_YOUTUBE,
@@ -291,6 +301,11 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
     private fun openPauseOnOpenPrompt(packageName: String) {
         promptActive = true
+        recordStatsEvent(
+            eventType = STATS_EVENT_PAUSE_ON_OPEN_PROMPT,
+            packageName = packageName,
+            target = packageName,
+        )
         showPauseOnOpenActivity(
             sourcePackageName = packageName,
             appLabel = getTrackedAppPromptLabel(packageName),
@@ -299,6 +314,14 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
     private fun openWebsitePrompt(packageName: String, domain: String) {
         promptActive = true
+        recordStatsEvent(
+            eventType = STATS_EVENT_WEBSITE_BLOCK,
+            packageName = packageName,
+            target = TARGET_WEBSITE,
+            metadata = JSONObject().apply {
+                put("domain", domain.trim().lowercase())
+            },
+        )
         showWebsiteBlockActivity(
             sourcePackageName = packageName,
             domain = domain,
@@ -307,6 +330,11 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
     private fun openDailyLimitPrompt(packageName: String) {
         promptActive = true
+        recordStatsEvent(
+            eventType = STATS_EVENT_DAILY_LIMIT_HIT,
+            packageName = packageName,
+            target = packageName,
+        )
         showDailyLimitReachedActivity(
             sourcePackageName = packageName,
             appLabel = getTrackedAppPromptLabel(packageName),
@@ -793,6 +821,41 @@ class AppGuardAccessibilityService : AccessibilityService() {
             .apply()
     }
 
+    private fun recordStatsEvent(
+        eventType: String,
+        packageName: String? = null,
+        target: String? = null,
+        metadata: JSONObject? = null,
+    ) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val existing = prefs.getString(STATS_EVENT_LOG_PREF_KEY, null)
+        val events = JSONArray(existing ?: "[]")
+        val trimmedEvents = JSONArray()
+        val pruneBeforeMillis =
+            System.currentTimeMillis() - (STATS_EVENT_RETENTION_DAYS * 24L * 60L * 60L * 1000L)
+
+        for (index in 0 until events.length()) {
+            val entry = events.optJSONObject(index) ?: continue
+            if (entry.optLong("timestamp") >= pruneBeforeMillis) {
+                trimmedEvents.put(entry)
+            }
+        }
+
+        trimmedEvents.put(
+            JSONObject().apply {
+                put("timestamp", System.currentTimeMillis())
+                put("type", eventType)
+                put("packageName", packageName ?: "")
+                put("target", target ?: "")
+                put("metadata", metadata ?: JSONObject())
+            },
+        )
+
+        prefs.edit()
+            .putString(STATS_EVENT_LOG_PREF_KEY, trimmedEvents.toString())
+            .apply()
+    }
+
     private fun isYouTubePackage(packageName: String): Boolean {
         return packageName == YOUTUBE_PACKAGE_NAME ||
             packageName.startsWith(YOUTUBE_REVANCED_PACKAGE_PREFIX)
@@ -803,8 +866,10 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val CUSTOM_TRACKED_APPS_PREF_KEY = "custom_tracked_apps"
         const val BLOCKED_WEBSITES_PREF_KEY = "blocked_websites"
         const val SHORT_FORM_BYPASS_WINDOWS_PREF_KEY = "short_form_bypass_windows"
+        const val STATS_EVENT_LOG_PREF_KEY = "stats_event_log"
         const val PAUSE_DURATION_SECONDS_PREF_KEY = "pause_duration_seconds"
         const val DEFAULT_PAUSE_DURATION_SECONDS = 5
+        const val STATS_EVENT_RETENTION_DAYS = 90
         const val TEN_SECOND_LIMIT_VALUE = -10
         const val AWAITING_ACCESSIBILITY_ENABLE_PREF_KEY = "awaiting_accessibility_enable"
         const val ACCESSIBILITY_ENABLED_SUCCESS_PREF_KEY = "accessibility_enabled_success"
@@ -824,6 +889,15 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val TARGET_PAUSE_ON_OPEN = "pause_on_open"
         const val TARGET_WEBSITE = "website"
         const val TARGET_DAILY_LIMIT = "daily_limit"
+        const val STATS_EVENT_REELS_BLOCK = "reels_block"
+        const val STATS_EVENT_SHORTS_BLOCK = "shorts_block"
+        const val STATS_EVENT_WEBSITE_BLOCK = "website_block"
+        const val STATS_EVENT_PAUSE_ON_OPEN_PROMPT = "pause_on_open_prompt"
+        const val STATS_EVENT_DAILY_LIMIT_HIT = "daily_limit_hit"
+        const val STATS_EVENT_SHORT_FORM_BYPASS = "short_form_bypass"
+        const val STATS_EVENT_WEBSITE_BYPASS = "website_bypass"
+        const val STATS_EVENT_PAUSE_ON_OPEN_BYPASS = "pause_on_open_bypass"
+        const val STATS_EVENT_DAILY_LIMIT_BYPASS = "daily_limit_bypass"
         private const val INSTAGRAM_REELS_CONTAINER_VIEW_ID =
             "com.instagram.android:id/clips_video_container"
         private val instagramDmThreadViewIds = listOf(
@@ -968,6 +1042,14 @@ class AppGuardAccessibilityService : AccessibilityService() {
                 normalizedTarget == TARGET_INSTAGRAM ||
                     normalizedTarget == TARGET_YOUTUBE
             ) {
+                activeService?.recordStatsEvent(
+                    eventType = STATS_EVENT_SHORT_FORM_BYPASS,
+                    packageName = activeService?.lastForegroundPackage,
+                    target = normalizedTarget,
+                    metadata = JSONObject().apply {
+                        put("minutes", minutes)
+                    },
+                )
                 activeService?.recordShortFormBypassWindow(
                     target = normalizedTarget,
                     startMillis = startMillis,
@@ -999,6 +1081,15 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
         fun allowWebsiteForMinutes(packageName: String?, domain: String?, minutes: Int) {
             if (packageName.isNullOrBlank() || domain.isNullOrBlank()) return
+            activeService?.recordStatsEvent(
+                eventType = STATS_EVENT_WEBSITE_BYPASS,
+                packageName = packageName,
+                target = TARGET_WEBSITE,
+                metadata = JSONObject().apply {
+                    put("domain", domain.trim().lowercase())
+                    put("minutes", minutes)
+                },
+            )
             temporarilyAllowedWebsiteDomainsByPackage[packageName] = AllowedWebsite(
                 domain = domain.trim().lowercase(),
                 allowedUntilMillis = System.currentTimeMillis() + minutes * 60 * 1000L,
@@ -1011,6 +1102,14 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
         fun allowPauseOnOpen(packageName: String?, minutes: Int) {
             if (packageName.isNullOrBlank() || minutes <= 0) return
+            activeService?.recordStatsEvent(
+                eventType = STATS_EVENT_PAUSE_ON_OPEN_BYPASS,
+                packageName = packageName,
+                target = packageName,
+                metadata = JSONObject().apply {
+                    put("minutes", minutes)
+                },
+            )
             pauseOnOpenAllowedUntilMillisByPackage[packageName] =
                 System.currentTimeMillis() + minutes * 60L * 1000L
             promptSuppressedUntilMillis = System.currentTimeMillis() + PROMPT_SUPPRESSION_MILLIS
@@ -1031,6 +1130,14 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
         fun allowDailyLimitForMinutes(packageName: String?, minutes: Int) {
             if (packageName.isNullOrBlank() || minutes <= 0) return
+            activeService?.recordStatsEvent(
+                eventType = STATS_EVENT_DAILY_LIMIT_BYPASS,
+                packageName = packageName,
+                target = packageName,
+                metadata = JSONObject().apply {
+                    put("minutes", minutes)
+                },
+            )
             dailyLimitAllowedUntilMillisByPackage[packageName] =
                 System.currentTimeMillis() + minutes * 60L * 1000L
             promptSuppressedUntilMillis = System.currentTimeMillis() + PROMPT_SUPPRESSION_MILLIS

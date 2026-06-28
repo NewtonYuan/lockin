@@ -169,10 +169,7 @@ class HomeOverview extends StatelessWidget {
 }
 
 class _PermissionErrorBanner extends StatelessWidget {
-  const _PermissionErrorBanner({
-    required this.label,
-    required this.onTap,
-  });
+  const _PermissionErrorBanner({required this.label, required this.onTap});
 
   final String label;
   final VoidCallback onTap;
@@ -329,59 +326,6 @@ class _ScrollMinutesRing extends StatelessWidget {
                   ),
                 ],
               ),
-              Positioned(
-                top: 170,
-                child: Tooltip(
-                  richMessage: WidgetSpan(
-                    child: RichText(
-                      text: const TextSpan(
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          height: 1.3,
-                        ),
-                        children: [
-                          TextSpan(text: 'Only counting apps listed in '),
-                          WidgetSpan(
-                            alignment: PlaceholderAlignment.middle,
-                            child: SizedBox(
-                              width: 13,
-                              height: 13,
-                              child: _TooltipBlockIcon(),
-                            ),
-                          ),
-                          TextSpan(text: ' Block'),
-                        ],
-                      ),
-                    ),
-                  ),
-                  triggerMode: TooltipTriggerMode.tap,
-                  waitDuration: Duration.zero,
-                  showDuration: Duration(seconds: 3),
-                  preferBelow: true,
-                  textStyle: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    height: 1.3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: appText.withValues(alpha: 0.94),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 8,
-                  ),
-                  child: SvgPicture.asset(
-                    'assets/icons/help.svg',
-                    width: 22,
-                    height: 22,
-                    colorFilter: const ColorFilter.mode(brand, BlendMode.srcIn),
-                  ),
-                ),
-              ),
             ],
           ),
         ),
@@ -419,10 +363,7 @@ class _AppIcon extends StatelessWidget {
 }
 
 class _AssetIcon extends StatelessWidget {
-  const _AssetIcon({
-    required this.assetPath,
-    this.fit = BoxFit.contain,
-  });
+  const _AssetIcon({required this.assetPath, this.fit = BoxFit.contain});
 
   final String assetPath;
   final BoxFit fit;
@@ -430,10 +371,7 @@ class _AssetIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (assetPath.toLowerCase().endsWith('.svg')) {
-      return SvgPicture.asset(
-        assetPath,
-        fit: fit,
-      );
+      return SvgPicture.asset(assetPath, fit: fit);
     }
     return Image.asset(assetPath, fit: fit);
   }
@@ -882,7 +820,9 @@ class _StreakSummaryItem extends StatelessWidget {
             else
               RichText(
                 textAlign: TextAlign.center,
-                text: TextSpan(children: _streakValueSpans(context, value ?? '')),
+                text: TextSpan(
+                  children: _streakValueSpans(context, value ?? ''),
+                ),
               ),
             const SizedBox(height: 6),
             Text(
@@ -966,9 +906,6 @@ class _SegmentedRingPainter extends CustomPainter {
       canvas.drawCircle(center, radius, backgroundPaint);
       return;
     }
-
-    backgroundPaint.color = appSurfaceStrong;
-    canvas.drawCircle(center, radius, backgroundPaint);
 
     final segmentPaint = Paint()
       ..style = PaintingStyle.stroke
@@ -1218,18 +1155,6 @@ class _RestrictedAppIcon extends StatelessWidget {
             ? Image.memory(visual.iconBytes!, fit: BoxFit.cover)
             : Container(color: appSurfaceStrong),
       ),
-    );
-  }
-}
-
-class _TooltipBlockIcon extends StatelessWidget {
-  const _TooltipBlockIcon();
-
-  @override
-  Widget build(BuildContext context) {
-    return SvgPicture.asset(
-      'assets/icons/block.svg',
-      colorFilter: const ColorFilter.mode(Colors.white, BlendMode.srcIn),
     );
   }
 }

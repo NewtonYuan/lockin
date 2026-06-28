@@ -89,6 +89,8 @@ class BlockScreen extends StatelessWidget {
     required this.onSelectTimeLimit,
     required this.pauseDurationSeconds,
     required this.onPauseDurationChanged,
+    required this.isPremium,
+    required this.onOpenPremium,
     required this.isAccessibilityAllowed,
     required this.onOpenAccessibilitySettings,
   });
@@ -112,6 +114,8 @@ class BlockScreen extends StatelessWidget {
   final void Function(String settingKey, int? minutes) onSelectTimeLimit;
   final int pauseDurationSeconds;
   final ValueChanged<int> onPauseDurationChanged;
+  final bool isPremium;
+  final VoidCallback onOpenPremium;
   final bool isAccessibilityAllowed;
   final VoidCallback onOpenAccessibilitySettings;
 
@@ -240,6 +244,7 @@ class BlockScreen extends StatelessWidget {
             iconSize: 24,
             isSubItem: true,
             useCheckbox: true,
+            isPremiumOnly: true,
           ),
           _BlockItemData.toggle(
             keyName: 'instagram_explore',
@@ -250,6 +255,8 @@ class BlockScreen extends StatelessWidget {
         onToggleExpanded: () => onToggleExpanded('Instagram'),
         onToggleSetting: onToggleSetting,
         onSelectTimeLimit: onSelectTimeLimit,
+        isPremium: isPremium,
+        onOpenPremium: onOpenPremium,
       ),
       const SizedBox(height: 8),
       _AppBlockCard(
@@ -284,11 +291,19 @@ class BlockScreen extends StatelessWidget {
         onToggleExpanded: () => onToggleExpanded('YouTube'),
         onToggleSetting: onToggleSetting,
         onSelectTimeLimit: onSelectTimeLimit,
+        isPremium: isPremium,
+        onOpenPremium: onOpenPremium,
       ),
     ];
 
     children.add(const SizedBox(height: 14));
-    children.add(const _AppSectionHeader(label: 'Additional'));
+    children.add(
+      _AppSectionHeader(
+        label: 'Additional',
+        trailingText: isPremium ? null : '${customTrackedApps.length}/5',
+        onTrailingTap: isPremium ? null : onOpenPremium,
+      ),
+    );
 
     for (final app in customTrackedApps) {
       children.add(const SizedBox(height: 8));
@@ -306,6 +321,7 @@ class BlockScreen extends StatelessWidget {
             value,
           ),
           onRemoveApp: () => onDeleteCustomTrackedApp(app),
+          onOpenPremium: onOpenPremium,
         ),
       );
     }
@@ -731,9 +747,13 @@ class _CategoryPageViewState extends State<_CategoryPageView> {
 class _AppSectionHeader extends StatelessWidget {
   const _AppSectionHeader({
     required this.label,
+    this.trailingText,
+    this.onTrailingTap,
   });
 
   final String label;
+  final String? trailingText;
+  final VoidCallback? onTrailingTap;
 
   @override
   Widget build(BuildContext context) {
@@ -760,6 +780,30 @@ class _AppSectionHeader extends StatelessWidget {
             thickness: 1,
           ),
         ),
+        if (trailingText != null) ...[
+          const SizedBox(width: 10),
+          InkWell(
+            borderRadius: BorderRadius.circular(999),
+            splashColor: brand.withValues(alpha: 0.14),
+            highlightColor: appText.withValues(alpha: 0.03),
+            onTap: onTrailingTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Text(
+                trailingText!,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: appMutedText,
+                      fontWeight: FontWeight.w800,
+                    ) ??
+                    const TextStyle(
+                      color: appMutedText,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -775,6 +819,7 @@ class _AdditionalTrackedAppCard extends StatelessWidget {
     required this.onSelectTimeLimit,
     required this.onTogglePauseOnOpen,
     required this.onRemoveApp,
+    required this.onOpenPremium,
   });
 
   final CustomTrackedApp app;
@@ -785,6 +830,7 @@ class _AdditionalTrackedAppCard extends StatelessWidget {
   final ValueChanged<int?> onSelectTimeLimit;
   final ValueChanged<bool> onTogglePauseOnOpen;
   final VoidCallback onRemoveApp;
+  final VoidCallback onOpenPremium;
 
   @override
   Widget build(BuildContext context) {
@@ -819,6 +865,8 @@ class _AdditionalTrackedAppCard extends StatelessWidget {
       onToggleSetting: (settingKey, value) => onTogglePauseOnOpen(value),
       onSelectTimeLimit: (_, minutes) => onSelectTimeLimit(minutes),
       onActionPressed: (_) => onRemoveApp(),
+      isPremium: true,
+      onOpenPremium: onOpenPremium,
     );
   }
 }
@@ -1672,6 +1720,8 @@ class _AppBlockCard extends StatelessWidget {
     required this.onToggleExpanded,
     required this.onToggleSetting,
     required this.onSelectTimeLimit,
+    required this.isPremium,
+    required this.onOpenPremium,
     this.onActionPressed,
   });
 
@@ -1684,6 +1734,8 @@ class _AppBlockCard extends StatelessWidget {
   final VoidCallback onToggleExpanded;
   final void Function(String settingKey, bool value) onToggleSetting;
   final void Function(String settingKey, int? minutes) onSelectTimeLimit;
+  final bool isPremium;
+  final VoidCallback onOpenPremium;
   final ValueChanged<String>? onActionPressed;
 
   static const double _headerMinHeight = 52;
@@ -1829,6 +1881,8 @@ class _AppBlockCard extends StatelessWidget {
                             .map(
                               (item) => _BlockItemRow(
                                 item: item,
+                                isPremium: isPremium,
+                                onOpenPremium: onOpenPremium,
                                 onToggleChanged: (value) =>
                                     onToggleSetting(item.keyName, value),
                                 onTimeLimitSelected: (minutes) =>
@@ -2070,6 +2124,8 @@ class _BlockAppIcon extends StatelessWidget {
 class _BlockItemRow extends StatelessWidget {
   const _BlockItemRow({
     required this.item,
+    required this.isPremium,
+    required this.onOpenPremium,
     required this.onToggleChanged,
     required this.onTimeLimitSelected,
     this.onActionPressed,
@@ -2105,6 +2161,8 @@ class _BlockItemRow extends StatelessWidget {
   static const List<int> _minuteIntervals = [0, 15, 30, 45];
 
   final _BlockItemData item;
+  final bool isPremium;
+  final VoidCallback onOpenPremium;
   final ValueChanged<bool> onToggleChanged;
   final ValueChanged<int?> onTimeLimitSelected;
   final ValueChanged<String>? onActionPressed;
@@ -2117,8 +2175,10 @@ class _BlockItemRow extends StatelessWidget {
     final toggleHorizontalPadding = isSubItem ? 12.0 : 14.0;
     final leadingGap = isSubItem ? 8.0 : 10.0;
     final leadingInset = isSubItem ? 26.0 : 0.0;
+    final isLockedPremium = item.isPremiumOnly && !isPremium;
+    final lockedColor = appText.withValues(alpha: 0.42);
     final labelStyle = TextStyle(
-      color: appText,
+      color: isLockedPremium ? lockedColor : appText,
       fontSize: 15,
       fontWeight: isSubItem ? FontWeight.w500 : FontWeight.w500,
     );
@@ -2224,7 +2284,9 @@ class _BlockItemRow extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
           splashColor: brand.withValues(alpha: 0.14),
           highlightColor: appText.withValues(alpha: 0.03),
-          onTap: () => onToggleChanged(!(item.value ?? false)),
+          onTap: isLockedPremium
+              ? onOpenPremium
+              : () => onToggleChanged(!(item.value ?? false)),
           child: ConstrainedBox(
             constraints: BoxConstraints(minHeight: rowMinHeight),
             child: Padding(
@@ -2240,7 +2302,23 @@ class _BlockItemRow extends StatelessWidget {
                       style: labelStyle,
                     ),
                   ),
-                  if (item.useCheckbox)
+                  if (isLockedPremium)
+                    SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: Center(
+                        child: SvgPicture.asset(
+                          'assets/icons/diamond.svg',
+                          width: 22,
+                          height: 22,
+                          colorFilter: ColorFilter.mode(
+                            lockedColor,
+                            BlendMode.srcIn,
+                          ),
+                        ),
+                      ),
+                    )
+                  else if (item.useCheckbox)
                     Transform.scale(
                       scale: 1.0,
                       child: Checkbox(
@@ -2583,6 +2661,7 @@ class _BlockItemData {
     this.iconSize = 22,
     this.isSubItem = false,
     this.useCheckbox = false,
+    this.isPremiumOnly = false,
   }) : minutes = null,
        isAction = false,
        isTimeLimit = false;
@@ -2595,6 +2674,7 @@ class _BlockItemData {
     this.iconSize = 22,
   }) : value = null,
        useCheckbox = false,
+       isPremiumOnly = false,
        isSubItem = false,
        isAction = false,
        isTimeLimit = true;
@@ -2607,6 +2687,7 @@ class _BlockItemData {
   }) : value = null,
        minutes = null,
        useCheckbox = false,
+       isPremiumOnly = false,
        isSubItem = false,
        isAction = true,
        isTimeLimit = false;
@@ -2621,4 +2702,5 @@ class _BlockItemData {
   final bool isSubItem;
   final bool isAction;
   final bool useCheckbox;
+  final bool isPremiumOnly;
 }

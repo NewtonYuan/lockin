@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 const brand = Color(0xFF00688F);
+const premiumGold = Color(0xFFD4A437);
 const appBackground = Color(0xFFFFFFFF);
 const appSurface = Color(0xFFF4F7FA);
 const appSurfaceStrong = Color(0xFFE8EDF3);

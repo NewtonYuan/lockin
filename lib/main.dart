@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 
 import 'brand.dart';
 import 'onboarding.dart';
+import 'services/premium_service.dart';
+import 'services/statistics_history_store.dart';
 import 'tabs/block_tab.dart';
 import 'tabs/home_tab.dart';
 import 'tabs/settings_tab.dart';
@@ -12,46 +15,6 @@ import 'widgets/days_tracker_calendar.dart';
 
 void main() {
   runApp(const MyApp());
-}
-
-const _trackedUsageApps = [
-  _TrackedUsageApp(
-    appName: 'Instagram',
-    packageNames: ['com.instagram.android'],
-    color: Color(0xFF00688F),
-  ),
-  _TrackedUsageApp(
-    appName: 'YouTube',
-    packageNames: ['com.google.android.youtube'],
-    packagePrefixes: ['app.revanced.android.youtube'],
-    color: Color(0xFF2784A3),
-  ),
-];
-
-class _TrackedUsageApp {
-  const _TrackedUsageApp({
-    required this.appName,
-    required this.packageNames,
-    this.packagePrefixes = const [],
-    required this.color,
-  });
-
-  final String appName;
-  final List<String> packageNames;
-  final List<String> packagePrefixes;
-  final Color color;
-}
-
-class _CustomUsageApp {
-  const _CustomUsageApp({
-    required this.appName,
-    required this.packageName,
-    required this.color,
-  });
-
-  final String appName;
-  final String packageName;
-  final Color color;
 }
 
 class MyApp extends StatelessWidget {
@@ -84,9 +47,14 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const _accessibilityChannel = MethodChannel('tempus/accessibility');
   static const _navFadeDuration = Duration(milliseconds: 150);
+  static const _statisticsHistoryStore = StatisticsHistoryStore();
+  static const _playRedeemUrl = 'https://play.google.com/redeem';
 
   int _selectedIndex = 0;
   late final PageController _pageController;
+  late final PremiumService _premiumService;
+  final GlobalKey<StatisticsTabState> _statisticsTabKey =
+      GlobalKey<StatisticsTabState>();
   double _pageOpacity = 1;
   bool _isFadingBetweenTabs = false;
   bool? _isAccessibilityEnabled;
@@ -100,9 +68,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   OnboardingStep _onboardingStep = OnboardingStep.intro;
   DateTime _trackerMonth = DateTime(DateTime.now().year, DateTime.now().month);
   DateTime _appInstalledOn = DateTime.now();
-  List<AppUsageSegment> _usageSegments = const [];
+  List<AppUsageSegment> _allAppUsageSegments = const [];
+  StatisticsSnapshot? _statisticsSnapshot;
+  bool _isStatisticsLoading = false;
+  bool _statisticsNeedsRefresh = true;
+  String? _lastPremiumErrorMessage;
   final Map<String, ScrollDayStatus> _scrollDayStatuses = {};
   Set<String>? _installedTrackedPackages;
+  List<CustomTrackedApp> _installedApps = const [];
   List<CustomTrackedApp> _customTrackedApps = const [];
   final List<BlockedWebsiteEntry> _blockedWebsites = [];
   String _blockCategory = 'Apps';
@@ -125,14 +98,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _premiumService = PremiumService();
     _pageController = PageController();
     WidgetsBinding.instance.addObserver(this);
+    _premiumService.addListener(_handlePremiumStateChanged);
+    _premiumService.initialize();
     _refreshAccessibilityStatus();
     _refreshUsageAccessStatus();
     _loadOnboardingState();
     _loadSavedBlockConfig();
     _refreshInstalledTrackedPackages();
-    _refreshUsageStats();
+    _refreshHomeUsage();
     _loadAppInstallDate();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _consumeSharedWebsite();
@@ -141,9 +117,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _premiumService.removeListener(_handlePremiumStateChanged);
+    _premiumService.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
     super.dispose();
+  }
+
+  void _handlePremiumStateChanged() {
+    if (!mounted) return;
+    final errorMessage = _premiumService.errorMessage;
+    if (errorMessage != null && errorMessage != _lastPremiumErrorMessage) {
+      _lastPremiumErrorMessage = errorMessage;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(errorMessage)));
+    } else if (errorMessage == null) {
+      _lastPremiumErrorMessage = null;
+    }
+    setState(() {});
   }
 
   @override
@@ -152,7 +144,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _refreshAccessibilityStatus();
       _refreshUsageAccessStatus();
       _refreshInstalledTrackedPackages();
-      _refreshUsageStats();
+      _refreshHomeUsage();
+      if (_selectedIndex == 2) {
+        _loadStatisticsTabData();
+      }
       _consumeSharedWebsite();
     }
   }
@@ -412,28 +407,117 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _refreshUsageStats() async {
+  Future<void> _refreshHomeUsage() async {
     try {
-      final usageStats = await _accessibilityChannel.invokeListMethod<dynamic>(
-        'getTodayUsageStats',
-      );
+      final allAppUsageStats = await _accessibilityChannel
+          .invokeListMethod<dynamic>('getTodayAllAppUsageStats');
       final scrollHeuristicMetrics = await _accessibilityChannel
           .invokeMapMethod<String, dynamic>('getTodayScrollHeuristicMetrics');
-      if (!mounted || usageStats == null) return;
-      final usageSegments = _usageSegmentsFromStats(usageStats);
+      if (!mounted) return;
+      final allAppUsageSegments = _allUsageSegmentsFromStats(allAppUsageStats);
       setState(() {
-        _usageSegments = usageSegments;
+        _allAppUsageSegments = allAppUsageSegments;
       });
       _updateTodayScrollStatus(scrollHeuristicMetrics);
     } on PlatformException {
       if (!mounted) return;
       setState(() {
-        _usageSegments = const [];
+        _allAppUsageSegments = const [];
       });
     } on MissingPluginException {
       if (!mounted) return;
       setState(() {
-        _usageSegments = const [];
+        _allAppUsageSegments = const [];
+      });
+    }
+  }
+
+  Future<void> _openPremiumSheet() async {
+    await _premiumService.loadProducts();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return AnimatedBuilder(
+          animation: _premiumService,
+          builder: (context, _) {
+            return _PremiumSheet(
+              premiumService: _premiumService,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _openRedeemCode() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return _RedeemCodeSheet(
+          onOpenRedeem: () => _openWebsite(_playRedeemUrl),
+        );
+      },
+    );
+  }
+
+  Future<void> _loadStatisticsTabData({bool force = false}) async {
+    if (_isStatisticsLoading) return;
+    if (!force && !_statisticsNeedsRefresh && _statisticsSnapshot != null) {
+      return;
+    }
+
+    setState(() {
+      _isStatisticsLoading = true;
+    });
+
+    try {
+      final storedSnapshotFuture = _statisticsHistoryStore.loadSnapshot();
+      final installedAppsFuture = _requestInstalledApps();
+      final statisticsDataFuture = _accessibilityChannel
+          .invokeMapMethod<String, dynamic>('getStatisticsData');
+
+      final storedSnapshot = await storedSnapshotFuture;
+      if (mounted && storedSnapshot != null && _statisticsSnapshot == null) {
+        setState(() {
+          _statisticsSnapshot = storedSnapshot;
+        });
+      }
+
+      final installedApps = await installedAppsFuture;
+      final statisticsData = await statisticsDataFuture;
+      if (!mounted) return;
+
+      final nativeStatisticsSnapshot = statisticsData == null
+          ? null
+          : StatisticsSnapshot.fromMap(statisticsData);
+      final resolvedStatisticsSnapshot = nativeStatisticsSnapshot == null
+          ? (storedSnapshot ?? _statisticsSnapshot)
+          : await _statisticsHistoryStore.mergeAndSave(nativeStatisticsSnapshot);
+      if (!mounted) return;
+
+      setState(() {
+        _installedApps = installedApps;
+        _statisticsSnapshot = resolvedStatisticsSnapshot;
+        _statisticsNeedsRefresh = false;
+        _isStatisticsLoading = false;
+      });
+    } on PlatformException {
+      final storedSnapshot = await _statisticsHistoryStore.loadSnapshot();
+      if (!mounted) return;
+      setState(() {
+        _statisticsSnapshot = storedSnapshot ?? _statisticsSnapshot;
+        _isStatisticsLoading = false;
+      });
+    } on MissingPluginException {
+      final storedSnapshot = await _statisticsHistoryStore.loadSnapshot();
+      if (!mounted) return;
+      setState(() {
+        _statisticsSnapshot = storedSnapshot ?? _statisticsSnapshot;
+        _isStatisticsLoading = false;
       });
     }
   }
@@ -541,7 +625,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             );
         }
       });
-      _refreshUsageStats();
+      _refreshHomeUsage();
+      _statisticsNeedsRefresh = true;
     } on PlatformException {
       // Android-only persistence. Other platforms use in-memory defaults.
     } on MissingPluginException {
@@ -596,9 +681,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _setNativePauseDurationSeconds(int seconds) async {
     try {
-      await _accessibilityChannel.invokeMethod<void>('setPauseDurationSeconds', {
-        'seconds': seconds,
-      });
+      await _accessibilityChannel.invokeMethod<void>(
+        'setPauseDurationSeconds',
+        {'seconds': seconds},
+      );
     } on PlatformException {
       // Android-only persistence. Other platforms keep local UI state only.
     } on MissingPluginException {
@@ -810,11 +896,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _refreshInstalledTrackedPackages() async {
     try {
-      final installedPackages = await _accessibilityChannel
-          .invokeListMethod<String>('getInstalledTrackedPackages');
-      if (!mounted || installedPackages == null) return;
+      final installedApps = await _accessibilityChannel
+          .invokeListMethod<dynamic>('getInstalledTrackedApps');
+      if (!mounted || installedApps == null) return;
+      final trackedApps = installedApps
+          .whereType<Map>()
+          .map(CustomTrackedApp.fromMap)
+          .where(
+            (entry) => entry.appName.isNotEmpty && entry.packageName.isNotEmpty,
+          )
+          .toList();
       setState(() {
-        _installedTrackedPackages = installedPackages.toSet();
+        _installedTrackedPackages = trackedApps
+            .map((entry) => entry.packageName)
+            .toSet();
       });
     } on PlatformException {
       if (!mounted) return;
@@ -893,69 +988,57 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     };
   }
 
-  List<AppUsageSegment> _usageSegmentsFromStats(List<dynamic> usageStats) {
-    final minutesByPackage = <String, int>{};
-    for (final rawStat in usageStats) {
-      if (rawStat is! Map) continue;
-      final packageName = rawStat['packageName'] as String?;
-      final minutes = rawStat['minutes'] as int?;
-      if (packageName == null || minutes == null || minutes <= 0) continue;
-      minutesByPackage.update(
-        packageName,
-        (currentMinutes) => currentMinutes + minutes,
-        ifAbsent: () => minutes,
-      );
-    }
+  List<AppUsageSegment> _allUsageSegmentsFromStats(List<dynamic>? usageStats) {
+    if (usageStats == null) return const [];
 
-    final segments = <AppUsageSegment>[];
-    for (final app in _trackedUsageApps) {
-      final totalMinutes =
-          app.packageNames.fold<int>(
-            0,
-            (sum, packageName) => sum + (minutesByPackage[packageName] ?? 0),
-          ) +
-          minutesByPackage.entries.fold<int>(
-            0,
-            (sum, entry) =>
-                app.packagePrefixes.any(
-                  (prefix) => entry.key.startsWith(prefix),
-                )
-                ? sum + entry.value
-                : sum,
+    final segments = usageStats
+        .whereType<Map>()
+        .map((rawStat) {
+          final appName = rawStat['appName'] as String?;
+          final packageName = rawStat['packageName'] as String?;
+          final minutes = rawStat['minutes'] as int?;
+          if (packageName == null || minutes == null || minutes <= 0) {
+            return null;
+          }
+          return AppUsageSegment(
+            appName: (appName == null || appName.isEmpty)
+                ? packageName
+                : appName,
+            minutes: minutes,
+            color: _colorForPackageName(packageName),
           );
-      if (totalMinutes <= 0) continue;
-      segments.add(
+        })
+        .whereType<AppUsageSegment>()
+        .toList();
+
+    final totalMinutes = segments.fold<int>(
+      0,
+      (sum, segment) => sum + segment.minutes,
+    );
+    if (totalMinutes <= 0) return segments;
+
+    final majorSegments = <AppUsageSegment>[];
+    var otherMinutes = 0;
+    for (final segment in segments) {
+      final share = segment.minutes / totalMinutes;
+      if (share < 0.05) {
+        otherMinutes += segment.minutes;
+      } else {
+        majorSegments.add(segment);
+      }
+    }
+
+    if (otherMinutes > 0) {
+      majorSegments.add(
         AppUsageSegment(
-          appName: app.appName,
-          minutes: totalMinutes,
-          color: app.color,
+          appName: 'Other',
+          minutes: otherMinutes,
+          color: appSurfaceStrong,
         ),
       );
     }
 
-    for (final app in _customUsageApps) {
-      final totalMinutes = minutesByPackage[app.packageName] ?? 0;
-      if (totalMinutes <= 0) continue;
-      segments.add(
-        AppUsageSegment(
-          appName: app.appName,
-          minutes: totalMinutes,
-          color: app.color,
-        ),
-      );
-    }
-
-    return segments;
-  }
-
-  List<_CustomUsageApp> get _customUsageApps {
-    return _customTrackedApps.map((app) {
-      return _CustomUsageApp(
-        appName: app.appName,
-        packageName: app.packageName,
-        color: _colorForPackageName(app.packageName),
-      );
-    }).toList();
+    return majorSegments;
   }
 
   Color _colorForPackageName(String packageName) {
@@ -1072,6 +1155,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _fadeToTab(int index) async {
+    if (index == 2) {
+      _statisticsTabKey.currentState?.resetToBase();
+      _loadStatisticsTabData();
+    }
     if (index == _selectedIndex || _isFadingBetweenTabs) {
       return;
     }
@@ -1081,6 +1168,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _selectedIndex = index;
       _pageOpacity = 0;
     });
+
+    if (index == 2) {
+      _loadStatisticsTabData();
+    }
 
     await Future<void>.delayed(_navFadeDuration);
     if (!mounted) return;
@@ -1103,7 +1194,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return [
       HomeOverview(
         trackerMonth: _trackerMonth,
-        usageSegments: _usageSegments,
+        usageSegments: _allAppUsageSegments,
         scrollDayStatuses: _scrollDayStatuses,
         firstTrackableDate: _appInstalledOn,
         blockSettings: _blockSettings,
@@ -1173,6 +1264,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             (entry) => entry.packageName == app.packageName,
           );
           if (alreadyExists) return;
+          if (!_premiumService.isPremium && _customTrackedApps.length >= 5) {
+            _openPremiumSheet();
+            return;
+          }
           setState(() {
             _customTrackedApps = [..._customTrackedApps, app];
             _dailyTimeLimits[app.settingKey] = selection.minutes;
@@ -1187,7 +1282,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             customTrackedAppPauseOnOpenSettingKey(app.packageName),
             selection.pauseOnOpen,
           );
-          _refreshUsageStats();
+          _refreshHomeUsage();
+          _statisticsNeedsRefresh = true;
         },
         onDeleteCustomTrackedApp: (app) {
           setState(() {
@@ -1205,7 +1301,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             customTrackedAppPauseOnOpenSettingKey(app.packageName),
             false,
           );
-          _refreshUsageStats();
+          _refreshHomeUsage();
+          _statisticsNeedsRefresh = true;
         },
         onSelectCategory: (category) {
           setState(() {
@@ -1251,18 +1348,31 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           });
           _setNativePauseDurationSeconds(seconds);
         },
+        isPremium: _premiumService.isPremium,
+        onOpenPremium: _openPremiumSheet,
         isAccessibilityAllowed: _isAccessibilityEnabled == true,
         onOpenAccessibilitySettings: _requestAccessibilityAccess,
       ),
       StatisticsTab(
+        key: _statisticsTabKey,
         onBackToHome: () {
           _fadeToTab(0);
         },
+        statistics: _statisticsSnapshot,
+        installedApps: _installedApps,
+        isLoading: _isStatisticsLoading,
+        isPremium: _premiumService.isPremium,
+        onOpenPremium: _openPremiumSheet,
+        isUsageAccessAllowed: _isUsageAccessEnabled == true,
+        onOpenUsageAccessSettings: _requestUsageAccess,
       ),
       SettingsTab(
         onBackToHome: () {
           _fadeToTab(0);
         },
+        premiumStatusLabel: _premiumService.statusLabel,
+        onOpenPremiumStatus: _openPremiumSheet,
+        onEnterCode: _openRedeemCode,
         onOpenAccessibilitySettings: _requestAccessibilityAccess,
         onOpenUsageAccessSettings: _requestUsageAccess,
         onShareApp: () {
@@ -1549,6 +1659,446 @@ class _PermissionDisclosureSheet extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PremiumSheet extends StatelessWidget {
+  const _PremiumSheet({
+    required this.premiumService,
+  });
+
+  final PremiumService premiumService;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.paddingOf(context).bottom;
+    ProductDetails? monthlyProduct;
+    ProductDetails? yearlyProduct;
+    for (final product in premiumService.products) {
+      final label = premiumService.labelForProduct(product);
+      if (label == '1 MONTH') {
+        monthlyProduct = product;
+      } else if (label == '1 YEAR') {
+        yearlyProduct = product;
+      }
+    }
+    final yearlySavePercent =
+        monthlyProduct != null &&
+            yearlyProduct != null &&
+            monthlyProduct.rawPrice > 0
+        ? 30
+        : null;
+    return SafeArea(
+      top: false,
+      child: Container(
+        decoration: const BoxDecoration(
+          color: appBackground,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomPadding),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.max,
+                    children: [
+                      SvgPicture.asset(
+                        'assets/icons/crown.svg',
+                        width: 22,
+                        height: 22,
+                        colorFilter: const ColorFilter.mode(
+                          premiumGold,
+                          BlendMode.srcIn,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Tempus Premium',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: premiumGold,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (premiumService.isPremium) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEDF8F0),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        'Premium',
+                        style: TextStyle(
+                          color: Color(0xFF2F7D44),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 10),
+              const Center(
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text: 'A few dollars to save hours every day.\n',
+                      ),
+                      TextSpan(
+                        text: 'Your call.',
+                        style: TextStyle(color: brand),
+                      ),
+                    ],
+                  ),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: appMutedText,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                decoration: BoxDecoration(
+                  color: appSurface,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _PremiumFeatureLine(label: 'Allow Reels from DMs'),
+                      SizedBox(height: 8),
+                      _PremiumFeatureLine(
+                        label: 'Unlimited App Guards',
+                      ),
+                      SizedBox(height: 8),
+                      _PremiumFeatureLine(
+                        label: 'Advanced Statistics',
+                      ),
+                      SizedBox(height: 8),
+                      _PremiumFeatureLine(
+                        label: 'Unlocked premium features',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (!premiumService.isStoreAvailable)
+                const Text(
+                  'Google Play billing is unavailable on this device right now.',
+                  style: TextStyle(
+                    color: appMutedText,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                )
+              else if (premiumService.isLoadingProducts &&
+                  premiumService.products.isEmpty)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.4,
+                      color: brand,
+                    ),
+                  ),
+                )
+              else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < premiumService.products.length; i++) ...[
+                      Expanded(
+                        child: _PremiumPlanButton(
+                          title: premiumService.labelForProduct(
+                            premiumService.products[i],
+                          ),
+                          price: premiumService.products[i].price,
+                          badgeText:
+                              premiumService.labelForProduct(
+                                        premiumService.products[i],
+                                      ) ==
+                                      '1 YEAR' &&
+                                  yearlySavePercent != null &&
+                                  yearlySavePercent > 0
+                              ? 'Save $yearlySavePercent%'
+                              : null,
+                          isLoading: premiumService.isPurchasePendingFor(
+                            premiumService.products[i],
+                          ),
+                          onTap: () => premiumService.buy(
+                            premiumService.products[i],
+                          ),
+                        ),
+                      ),
+                      if (i != premiumService.products.length - 1)
+                        const SizedBox(width: 10),
+                    ],
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PremiumFeatureLine extends StatelessWidget {
+  const _PremiumFeatureLine({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Icon(Icons.check_circle_rounded, color: brand, size: 18),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: appText,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PremiumPlanButton extends StatelessWidget {
+  const _PremiumPlanButton({
+    required this.title,
+    required this.price,
+    this.badgeText,
+    required this.isLoading,
+    required this.onTap,
+  });
+
+  final String title;
+  final String price;
+  final String? badgeText;
+  final bool isLoading;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasBanner = badgeText != null;
+    final priceLabel = switch (title) {
+      '1 MONTH' => '\$2.99 /month',
+      '1 YEAR' => '\$24.99 /year',
+      _ => price,
+    };
+    return SizedBox(
+      width: double.infinity,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.vertical(
+                top: const Radius.circular(12),
+                bottom: Radius.circular(hasBanner ? 0 : 12),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: appText.withValues(alpha: 0.08),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Material(
+              color: appSurface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(
+                  top: const Radius.circular(12),
+                  bottom: Radius.circular(hasBanner ? 0 : 12),
+                ),
+                side: const BorderSide(color: premiumGold, width: 1.2),
+              ),
+              child: InkWell(
+                onTap: isLoading ? null : onTap,
+                borderRadius: BorderRadius.vertical(
+                  top: const Radius.circular(12),
+                  bottom: Radius.circular(hasBanner ? 0 : 12),
+                ),
+                splashColor: brand.withValues(alpha: 0.18),
+                highlightColor: appText.withValues(alpha: 0.04),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: brand,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SvgPicture.asset(
+                            'assets/icons/crown.svg',
+                            width: 14,
+                            height: 14,
+                            colorFilter: const ColorFilter.mode(
+                              premiumGold,
+                              BlendMode.srcIn,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          const Text(
+                            'Premium',
+                            style: TextStyle(
+                              color: premiumGold,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      if (isLoading)
+                        const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.2,
+                            color: brand,
+                          ),
+                        )
+                      else
+                        Text(
+                          priceLabel,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: appText,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (hasBanner)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFF3E9B55),
+                borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(12),
+                ),
+              ),
+              child: Text(
+                badgeText!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RedeemCodeSheet extends StatelessWidget {
+  const _RedeemCodeSheet({required this.onOpenRedeem});
+
+  final VoidCallback onOpenRedeem;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.paddingOf(context).bottom;
+    return SafeArea(
+      top: false,
+      child: Container(
+        decoration: const BoxDecoration(
+          color: appBackground,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomPadding),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Redeem Code',
+                style: TextStyle(
+                  color: appText,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Promo codes are redeemed through Google Play and applied to the current Play account.',
+                style: TextStyle(
+                  color: appMutedText,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 18),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: onOpenRedeem,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: brand,
+                    minimumSize: const Size.fromHeight(50),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Open Google Play Redeem'),
+                ),
+              ),
+            ],
           ),
         ),
       ),

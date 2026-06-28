@@ -7,6 +7,9 @@ class SettingsTab extends StatelessWidget {
   const SettingsTab({
     super.key,
     required this.onBackToHome,
+    required this.premiumStatusLabel,
+    required this.onOpenPremiumStatus,
+    required this.onEnterCode,
     required this.onOpenAccessibilitySettings,
     required this.onOpenUsageAccessSettings,
     required this.onShareApp,
@@ -18,6 +21,9 @@ class SettingsTab extends StatelessWidget {
   });
 
   final VoidCallback onBackToHome;
+  final String premiumStatusLabel;
+  final VoidCallback onOpenPremiumStatus;
+  final VoidCallback onEnterCode;
   final VoidCallback onOpenAccessibilitySettings;
   final VoidCallback onOpenUsageAccessSettings;
   final VoidCallback onShareApp;
@@ -46,6 +52,24 @@ class SettingsTab extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
           sliver: SliverList(
             delegate: SliverChildListDelegate([
+              _SettingsGroup(
+                title: 'Account',
+                children: [
+                  _SettingsRow(
+                    icon: Icons.account_circle_outlined,
+                    title: 'Status',
+                    value: premiumStatusLabel,
+                    onTap: onOpenPremiumStatus,
+                  ),
+                  _SettingsRow(
+                    icon: Icons.confirmation_number_outlined,
+                    title: 'Enter Code',
+                    value: '',
+                    onTap: onEnterCode,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
               _SettingsGroup(
                 title: 'Permissions',
                 children: [
@@ -94,7 +118,7 @@ class SettingsTab extends StatelessWidget {
                   const _SettingsRow(
                     icon: Icons.info_outline_rounded,
                     title: 'Version',
-                    value: '0.2.4',
+                    value: '0.3.0',
                     showChevron: false,
                   ),
                 ],

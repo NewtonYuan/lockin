@@ -36,6 +36,7 @@ open class MainActivity : FlutterActivity() {
         private const val ONBOARDING_COMPLETED_PREF_KEY = "onboarding_completed"
         private const val ACCESSIBILITY_WATCH_INTERVAL_MILLIS = 500L
         private const val USAGE_ACCESS_WATCH_INTERVAL_MILLIS = 500L
+        private const val DAY_IN_MILLIS = 24L * 60L * 60L * 1000L
     }
 
     private val scrollDayStatusesPrefKey = "scroll_day_statuses"
@@ -179,8 +180,14 @@ open class MainActivity : FlutterActivity() {
                 "getTodayUsageStats" -> {
                     result.success(getTodayUsageStats())
                 }
+                "getTodayAllAppUsageStats" -> {
+                    result.success(getTodayAllAppUsageStats())
+                }
                 "getTodayScrollHeuristicMetrics" -> {
                     result.success(getTodayScrollHeuristicMetrics())
+                }
+                "getStatisticsData" -> {
+                    result.success(getStatisticsData())
                 }
                 "setDailyTimeLimit" -> {
                     val settingKey = call.argument<String>("settingKey")
@@ -262,6 +269,9 @@ open class MainActivity : FlutterActivity() {
                 }
                 "getInstalledTrackedPackages" -> {
                     result.success(getInstalledTrackedPackages())
+                }
+                "getInstalledTrackedApps" -> {
+                    result.success(getInstalledTrackedApps())
                 }
                 "getInstalledApps" -> {
                     appLoadingExecutor.execute {
@@ -523,6 +533,36 @@ open class MainActivity : FlutterActivity() {
             .filter { usage -> (usage["minutes"] as Int) > 0 }
     }
 
+    private fun getTodayAllAppUsageStats(): List<Map<String, Any>> {
+        if (!isUsageAccessEnabled()) {
+            return emptyList()
+        }
+
+        val todayWindow = getTodayWindow()
+        val foregroundMillisByPackage = getAllForegroundMillisByPackage(
+            startTime = todayWindow.first,
+            endTime = todayWindow.second,
+        )
+
+        return foregroundMillisByPackage.entries
+            .mapNotNull { entry ->
+                val minutes = (entry.value / 60000L).toInt()
+                if (minutes <= 0) return@mapNotNull null
+                val appName = try {
+                    val applicationInfo = packageManager.getApplicationInfo(entry.key, 0)
+                    packageManager.getApplicationLabel(applicationInfo).toString()
+                } catch (_: Exception) {
+                    entry.key
+                }
+                mapOf(
+                    "appName" to appName,
+                    "packageName" to entry.key,
+                    "minutes" to minutes,
+                )
+            }
+            .sortedByDescending { entry -> entry["minutes"] as Int }
+    }
+
     private fun getTodayScrollHeuristicMetrics(): Map<String, Int> {
         if (!isUsageAccessEnabled()) {
             return mapOf(
@@ -547,6 +587,340 @@ open class MainActivity : FlutterActivity() {
         )
     }
 
+    private fun getStatisticsData(): Map<String, Any> {
+        val todayWindow = getTodayWindow()
+        val todayStart = todayWindow.first
+        val now = todayWindow.second
+        val last7Start = startOfDay(todayStart - (6L * DAY_IN_MILLIS))
+        val last30Start = startOfDay(todayStart - (29L * DAY_IN_MILLIS))
+        val usageEnabled = isUsageAccessEnabled()
+        val allAppDefinitions = getStatisticsAppDefinitions()
+        val statsEvents = getStatsEvents().filter { event ->
+            event.timestamp in last30Start until now
+        }
+        val usageByPackageLast30 = if (usageEnabled) {
+            getAllForegroundMillisByPackage(last30Start, now)
+        } else {
+            emptyMap()
+        }
+        val appDefinitions = allAppDefinitions.filter { definition ->
+            trackedMinutesForAppDefinition(definition, usageByPackageLast30) > 0 ||
+                statsEvents.any { event -> definition.matches(event.packageName) }
+        }
+
+        val dailySummaries = mutableListOf<Map<String, Any>>()
+        val appDailyMinutes = appDefinitions.associate { definition ->
+            definition.id to mutableListOf<Int>()
+        }
+        val appDailySessionCounts = appDefinitions.associate { definition ->
+            definition.id to mutableListOf<Int>()
+        }
+        val appDailyLongestSessionMinutes = appDefinitions.associate { definition ->
+            definition.id to mutableListOf<Int>()
+        }
+
+        for (offset in 29 downTo 0) {
+            val dayStart = startOfDay(todayStart - (offset.toLong() * DAY_IN_MILLIS))
+            val dayEnd = minOf(dayStart + DAY_IN_MILLIS, now)
+            val usageByPackage = if (usageEnabled) {
+                getAllForegroundMillisByPackage(dayStart, dayEnd)
+            } else {
+                emptyMap()
+            }
+            val dayEvents = statsEvents.filter { event ->
+                event.timestamp in dayStart until dayEnd
+            }
+            val trackedMinutes = usageByPackage.values.sumOf { millis ->
+                (millis / 60000L).toInt()
+            }
+            val byType = summarizeEventsByType(dayEvents)
+            val sessionStats = if (usageEnabled) {
+                getForegroundSessionStatsForDefinitions(appDefinitions, dayStart, dayEnd)
+            } else {
+                SessionStats(emptyMap(), emptyMap())
+            }
+            val appEventsById = appDefinitions.associate { definition ->
+                definition.id to dayEvents.filter { event -> definition.matches(event.packageName) }
+            }
+            val bypassMinutesByAppIdForDay = if (usageEnabled) {
+                getShortFormBypassMinutesByStatisticsAppId(dayStart, dayEnd)
+            } else {
+                emptyMap()
+            }
+            val timeOfDayBlocks = emptyTimeOfDayCounts().toMutableMap()
+            val timeOfDayBypasses = emptyTimeOfDayCounts().toMutableMap()
+            for (event in dayEvents) {
+                val bucketLabel = timeOfDayBucketLabel(event.timestamp)
+                if (isBlockEventType(event.type)) {
+                    timeOfDayBlocks[bucketLabel] = (timeOfDayBlocks[bucketLabel] ?: 0) + 1
+                }
+                if (isBypassEventType(event.type)) {
+                    timeOfDayBypasses[bucketLabel] = (timeOfDayBypasses[bucketLabel] ?: 0) + 1
+                }
+            }
+            val appMinutes = buildMap<String, Int> {
+                for (definition in appDefinitions) {
+                    val minutes = trackedMinutesForAppDefinition(definition, usageByPackage)
+                    put(definition.id, minutes)
+                    appDailyMinutes[definition.id]?.add(minutes)
+                    appDailySessionCounts[definition.id]?.add(
+                        sessionStats.countsByAppId[definition.id] ?: 0,
+                    )
+                    appDailyLongestSessionMinutes[definition.id]?.add(
+                        sessionStats.longestSessionMinutesByAppId[definition.id] ?: 0,
+                    )
+                }
+            }
+            val appSessionCounts = buildMap<String, Int> {
+                for (definition in appDefinitions) {
+                    put(definition.id, sessionStats.countsByAppId[definition.id] ?: 0)
+                }
+            }
+            val appLongestSessionMinutes = buildMap<String, Int> {
+                for (definition in appDefinitions) {
+                    put(definition.id, sessionStats.longestSessionMinutesByAppId[definition.id] ?: 0)
+                }
+            }
+            val appReelsBlocks = buildMap<String, Int> {
+                for (definition in appDefinitions) {
+                    put(
+                        definition.id,
+                        appEventsById[definition.id].orEmpty().count { event ->
+                            event.type == AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK
+                        },
+                    )
+                }
+            }
+            val appShortsBlocks = buildMap<String, Int> {
+                for (definition in appDefinitions) {
+                    put(
+                        definition.id,
+                        appEventsById[definition.id].orEmpty().count { event ->
+                            event.type == AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK
+                        },
+                    )
+                }
+            }
+            val appPauseOnOpenPrompts = buildMap<String, Int> {
+                for (definition in appDefinitions) {
+                    put(
+                        definition.id,
+                        appEventsById[definition.id].orEmpty().count { event ->
+                            event.type == AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT
+                        },
+                    )
+                }
+            }
+            val appDailyLimitHits = buildMap<String, Int> {
+                for (definition in appDefinitions) {
+                    put(
+                        definition.id,
+                        appEventsById[definition.id].orEmpty().count { event ->
+                            event.type == AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT
+                        },
+                    )
+                }
+            }
+            val appBypasses = buildMap<String, Int> {
+                for (definition in appDefinitions) {
+                    put(
+                        definition.id,
+                        appEventsById[definition.id].orEmpty().count { event ->
+                            event.type == AppGuardAccessibilityService.STATS_EVENT_SHORT_FORM_BYPASS ||
+                                event.type == AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_BYPASS ||
+                                event.type == AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_BYPASS
+                        },
+                    )
+                }
+            }
+            val appBypassedMinutes = buildMap<String, Int> {
+                for (definition in appDefinitions) {
+                    put(definition.id, bypassMinutesByAppIdForDay[definition.id] ?: 0)
+                }
+            }
+
+            dailySummaries.add(
+                mapOf(
+                    "dateKey" to dateKeyForMillis(dayStart),
+                    "trackedMinutes" to trackedMinutes,
+                    "blocks" to countBlockEvents(dayEvents),
+                    "bypasses" to countBypassEvents(dayEvents),
+                    "reelsBlocks" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK),
+                    "shortsBlocks" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK),
+                    "websiteBlocks" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK),
+                    "pauseOnOpenPrompts" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT),
+                    "dailyLimitHits" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT),
+                    "shortFormBypasses" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_SHORT_FORM_BYPASS),
+                    "websiteBypasses" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BYPASS),
+                    "pauseOnOpenBypasses" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_BYPASS),
+                    "dailyLimitBypasses" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_BYPASS),
+                    "sessionCount" to appSessionCounts.values.sum(),
+                    "longestSessionMinutes" to (appLongestSessionMinutes.values.maxOrNull() ?: 0),
+                    "appMinutes" to appMinutes,
+                    "appSessionCounts" to appSessionCounts,
+                    "appLongestSessionMinutes" to appLongestSessionMinutes,
+                    "appReelsBlocks" to appReelsBlocks,
+                    "appShortsBlocks" to appShortsBlocks,
+                    "appPauseOnOpenPrompts" to appPauseOnOpenPrompts,
+                    "appDailyLimitHits" to appDailyLimitHits,
+                    "appBypasses" to appBypasses,
+                    "appBypassedMinutes" to appBypassedMinutes,
+                    "timeOfDayBlocks" to timeOfDayBlocks,
+                    "timeOfDayBypasses" to timeOfDayBypasses,
+                ),
+            )
+        }
+
+        val todayUsageByPackage = if (usageEnabled) {
+            getAllForegroundMillisByPackage(todayStart, now)
+        } else {
+            emptyMap()
+        }
+        val todayEvents = statsEvents.filter { event ->
+            event.timestamp in todayStart until now
+        }
+        val weekEvents = statsEvents.filter { event ->
+            event.timestamp in last7Start until now
+        }
+        val todayTrackedMinutes = todayUsageByPackage.values.sumOf { millis ->
+            (millis / 60000L).toInt()
+        }
+        val weekTrackedMinutes = dailySummaries
+            .takeLast(7)
+            .sumOf { summary -> summary["trackedMinutes"] as Int }
+        val averageDailyTrackedMinutes = weekTrackedMinutes / 7.0
+        val todayBypassMinutes = if (usageEnabled) {
+            (getShortFormBypassForegroundMillis(todayStart, now) / 60000L).toInt()
+        } else {
+            0
+        }
+        val weekBypassMinutes = if (usageEnabled) {
+            (getShortFormBypassForegroundMillis(last7Start, now) / 60000L).toInt()
+        } else {
+            0
+        }
+        val todayLimitOverageMinutes = if (usageEnabled) {
+            (getTrackedLimitOverageMillis(todayStart, now) / 60000L).toInt()
+        } else {
+            0
+        }
+        val weekLimitOverageMinutes = if (usageEnabled) {
+            (getTrackedLimitOverageMillis(last7Start, now) / 60000L).toInt()
+        } else {
+            0
+        }
+        val bypassMinutesByAppId = if (usageEnabled) {
+            getShortFormBypassMinutesByStatisticsAppId(last30Start, now)
+        } else {
+            emptyMap()
+        }
+
+        val todayAppMinutes = appDefinitions.associate { definition ->
+            definition.id to trackedMinutesForAppDefinition(definition, todayUsageByPackage)
+        }
+        val mostUsedTodayEntry = appDefinitions
+            .map { definition -> definition to (todayAppMinutes[definition.id] ?: 0) }
+            .maxByOrNull { it.second }
+
+        val websiteStats = statsEvents
+            .mapNotNull { event ->
+                val domain = event.metadata.optString("domain").trim().lowercase()
+                if (domain.isBlank()) return@mapNotNull null
+                domain to event
+            }
+            .groupBy({ it.first }, { it.second })
+            .entries
+            .map { (domain, events) ->
+                mapOf(
+                    "domain" to domain,
+                    "blocks" to events.count { it.type == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK },
+                    "bypasses" to events.count { it.type == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BYPASS },
+                )
+            }
+            .sortedWith(
+                compareByDescending<Map<String, Any>> { it["blocks"] as Int }
+                    .thenByDescending { it["bypasses"] as Int }
+                    .thenBy { it["domain"] as String },
+            )
+
+        val appStats = appDefinitions.map { definition ->
+            val daySeries = appDailyMinutes[definition.id].orEmpty()
+            val appEvents = statsEvents.filter { event ->
+                definition.matches(event.packageName)
+            }
+            val todayMinutes = todayAppMinutes[definition.id] ?: 0
+            val weekMinutes = daySeries.takeLast(7).sum()
+            val launchCountToday = appDailySessionCounts[definition.id]?.lastOrNull() ?: 0
+            val launchCountWeek = appDailySessionCounts[definition.id].orEmpty().takeLast(7).sum()
+            val longestSessionMinutes30d =
+                appDailyLongestSessionMinutes[definition.id].orEmpty().maxOrNull() ?: 0
+
+            mapOf(
+                "id" to definition.id,
+                "appName" to definition.appName,
+                "packageName" to definition.packageName,
+                "todayMinutes" to todayMinutes,
+                "weekMinutes" to weekMinutes,
+                "averageDailyMinutes7d" to (weekMinutes / 7.0),
+                "highestDayMinutes30d" to (daySeries.maxOrNull() ?: 0),
+                "launchCountToday" to launchCountToday,
+                "launchCountWeek" to launchCountWeek,
+                "longestSessionMinutes30d" to longestSessionMinutes30d,
+                "reelsBlocks" to appEvents.count { it.type == AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK },
+                "shortsBlocks" to appEvents.count { it.type == AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK },
+                "pauseOnOpenPrompts" to appEvents.count { it.type == AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT },
+                "dailyLimitHits" to appEvents.count { it.type == AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT },
+                "bypasses" to appEvents.count { event ->
+                    event.type == AppGuardAccessibilityService.STATS_EVENT_SHORT_FORM_BYPASS ||
+                        event.type == AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_BYPASS ||
+                        event.type == AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_BYPASS
+                },
+                "bypassedMinutes" to (bypassMinutesByAppId[definition.id] ?: 0),
+                "dailyMinutes30d" to daySeries,
+            )
+        }.sortedByDescending { app -> app["weekMinutes"] as Int }
+
+        val streaks = getStreakStatistics()
+        val eventTypeCounts = summarizeEventsByType(statsEvents)
+
+        return mapOf(
+            "generatedAtMillis" to now,
+            "overview" to mapOf(
+                "todayTrackedMinutes" to todayTrackedMinutes,
+                "weekTrackedMinutes" to weekTrackedMinutes,
+                "averageDailyTrackedMinutes7d" to averageDailyTrackedMinutes,
+                "todayBlocks" to countBlockEvents(todayEvents),
+                "todayBypasses" to countBypassEvents(todayEvents),
+                "todayBypassMinutes" to todayBypassMinutes,
+                "weekBypassMinutes" to weekBypassMinutes,
+                "todayLimitOverageMinutes" to todayLimitOverageMinutes,
+                "weekLimitOverageMinutes" to weekLimitOverageMinutes,
+                "currentStreak" to streaks.first,
+                "longestStreak" to streaks.second,
+                "mostUsedAppName" to (mostUsedTodayEntry?.first?.appName ?: ""),
+                "mostUsedAppMinutes" to (mostUsedTodayEntry?.second ?: 0),
+                "blockedWebsitesCount" to getBlockedWebsites().size,
+            ),
+            "daily" to dailySummaries,
+            "protection" to mapOf(
+                "reelsBlocks" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK),
+                "shortsBlocks" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK),
+                "websiteBlocks" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK),
+                "pauseOnOpenPrompts" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT),
+                "dailyLimitHits" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT),
+                "totalBlocks" to countBlockEvents(statsEvents),
+                "shortFormBypasses" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_SHORT_FORM_BYPASS),
+                "websiteBypasses" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BYPASS),
+                "pauseOnOpenBypasses" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_BYPASS),
+                "dailyLimitBypasses" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_BYPASS),
+                "totalBypasses" to countBypassEvents(statsEvents),
+            ),
+            "timeOfDay" to buildTimeOfDayBuckets(statsEvents),
+            "apps" to appStats,
+            "websites" to websiteStats,
+        )
+    }
+
     private fun getInstalledTrackedPackages(): List<String> {
         val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val launcherPackages = packageManager
@@ -554,6 +928,28 @@ open class MainActivity : FlutterActivity() {
             .mapNotNull { resolveInfo -> resolveInfo.activityInfo?.packageName }
 
         return launcherPackages.filter { packageName -> isTrackedUsagePackage(packageName) }
+    }
+
+    private fun getInstalledTrackedApps(): List<Map<String, Any>> {
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return packageManager
+            .queryIntentActivities(launcherIntent, 0)
+            .mapNotNull { resolveInfo ->
+                val activityInfo = resolveInfo.activityInfo ?: return@mapNotNull null
+                val appPackageName = activityInfo.packageName ?: return@mapNotNull null
+                if (appPackageName == packageName || !isTrackedUsagePackage(appPackageName)) {
+                    return@mapNotNull null
+                }
+                mapOf(
+                    "appName" to resolveInfo.loadLabel(packageManager).toString(),
+                    "packageName" to appPackageName,
+                    "iconBytes" to encodeDrawableToPngBytes(
+                        resolveInfo.loadIcon(packageManager),
+                    ),
+                )
+            }
+            .distinctBy { app -> app["packageName"] }
+            .sortedBy { app -> (app["appName"] as? String)?.lowercase() ?: "" }
     }
 
     private fun getInstalledApps(): List<Map<String, Any>> {
@@ -650,6 +1046,70 @@ open class MainActivity : FlutterActivity() {
                 packageName = currentForegroundPackage!!,
                 durationMillis = endTime - currentForegroundStart,
             )
+        }
+
+        return totalsByPackage
+    }
+
+    private fun getAllForegroundMillisByPackage(
+        startTime: Long,
+        endTime: Long,
+    ): Map<String, Long> {
+        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
+        val event = UsageEvents.Event()
+        var currentForegroundPackage: String? = null
+        var currentForegroundStart = 0L
+        val totalsByPackage = mutableMapOf<String, Long>()
+
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            val packageName = event.packageName ?: continue
+            if (shouldIgnoreUsagePackage(packageName)) continue
+
+            when (event.eventType) {
+                UsageEvents.Event.ACTIVITY_RESUMED,
+                UsageEvents.Event.MOVE_TO_FOREGROUND,
+                -> {
+                    if (
+                        currentForegroundPackage != null &&
+                        event.timeStamp > currentForegroundStart
+                    ) {
+                        val previousPackage = currentForegroundPackage!!
+                        val duration = event.timeStamp - currentForegroundStart
+                        if (duration > 0L) {
+                            totalsByPackage[previousPackage] =
+                                (totalsByPackage[previousPackage] ?: 0L) + duration
+                        }
+                    }
+                    currentForegroundPackage = packageName
+                    currentForegroundStart = event.timeStamp
+                }
+
+                UsageEvents.Event.ACTIVITY_PAUSED,
+                UsageEvents.Event.MOVE_TO_BACKGROUND,
+                -> {
+                    if (
+                        currentForegroundPackage == packageName &&
+                        event.timeStamp > currentForegroundStart
+                    ) {
+                        val duration = event.timeStamp - currentForegroundStart
+                        totalsByPackage[packageName] =
+                            (totalsByPackage[packageName] ?: 0L) + duration
+                        currentForegroundPackage = null
+                        currentForegroundStart = 0L
+                    }
+                }
+            }
+        }
+
+        if (currentForegroundPackage != null && endTime > currentForegroundStart) {
+            val packageName = currentForegroundPackage!!
+            val duration = endTime - currentForegroundStart
+            if (duration > 0L) {
+                totalsByPackage[packageName] =
+                    (totalsByPackage[packageName] ?: 0L) + duration
+            }
         }
 
         return totalsByPackage
@@ -759,6 +1219,45 @@ open class MainActivity : FlutterActivity() {
             }
     }
 
+    private fun getShortFormBypassMinutesByStatisticsAppId(
+        startTime: Long,
+        endTime: Long,
+    ): Map<String, Int> {
+        val windows = getShortFormBypassWindows()
+            .filter { window ->
+                window.endMillis > startTime && window.startMillis < endTime
+            }
+        if (windows.isEmpty()) return emptyMap()
+
+        val totalsByAppId = mutableMapOf<String, Int>()
+        val definitionsByTarget = mapOf(
+            AppGuardAccessibilityService.TARGET_INSTAGRAM to getStatisticsAppDefinitions().firstOrNull {
+                it.id == "instagram"
+            },
+            AppGuardAccessibilityService.TARGET_YOUTUBE to getStatisticsAppDefinitions().firstOrNull {
+                it.id == "youtube"
+            },
+        )
+
+        for ((target, definition) in definitionsByTarget) {
+            if (definition == null) continue
+            val targetWindows = windows.filter { it.target == target }
+            if (targetWindows.isEmpty()) continue
+
+            val mergedWindows = mergeBypassWindows(targetWindows, startTime, endTime)
+            val totalMinutes = mergedWindows.sumOf { window ->
+                (getForegroundMillisForAppDefinition(
+                    definition = definition,
+                    startTime = window.startMillis,
+                    endTime = window.endMillis,
+                ) / 60000L).toInt()
+            }
+            totalsByAppId[definition.id] = totalMinutes
+        }
+
+        return totalsByAppId
+    }
+
     private fun mergeBypassWindows(
         windows: List<ShortFormBypassWindow>,
         startTime: Long,
@@ -813,6 +1312,371 @@ open class MainActivity : FlutterActivity() {
         }.filter { window ->
             window.target.isNotBlank() && window.endMillis > window.startMillis
         }
+    }
+
+    private fun getStatsEvents(): List<StatsEvent> {
+        val prefs = getSharedPreferences(AppGuardAccessibilityService.PREFS_NAME, Context.MODE_PRIVATE)
+        val serialized = prefs.getString(AppGuardAccessibilityService.STATS_EVENT_LOG_PREF_KEY, null)
+            ?: return emptyList()
+        val jsonArray = JSONArray(serialized)
+        return List(jsonArray.length()) { index ->
+            val entry = jsonArray.optJSONObject(index) ?: JSONObject()
+            StatsEvent(
+                timestamp = entry.optLong("timestamp"),
+                type = entry.optString("type"),
+                packageName = entry.optString("packageName"),
+                target = entry.optString("target"),
+                metadata = entry.optJSONObject("metadata") ?: JSONObject(),
+            )
+        }.filter { event ->
+            event.timestamp > 0L && event.type.isNotBlank()
+        }
+    }
+
+    private fun summarizeEventsByType(events: List<StatsEvent>): Map<String, Int> {
+        val counts = mutableMapOf(
+            AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK to 0,
+            AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK to 0,
+            AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK to 0,
+            AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT to 0,
+            AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT to 0,
+            AppGuardAccessibilityService.STATS_EVENT_SHORT_FORM_BYPASS to 0,
+            AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BYPASS to 0,
+            AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_BYPASS to 0,
+            AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_BYPASS to 0,
+        )
+        for (event in events) {
+            counts[event.type] = (counts[event.type] ?: 0) + 1
+        }
+        return counts
+    }
+
+    private fun countBlockEvents(events: List<StatsEvent>): Int {
+        return events.count { event ->
+            event.type == AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK ||
+                event.type == AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK ||
+                event.type == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK ||
+                event.type == AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT ||
+                event.type == AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT
+        }
+    }
+
+    private fun countBypassEvents(events: List<StatsEvent>): Int {
+        return events.count { event ->
+            event.type == AppGuardAccessibilityService.STATS_EVENT_SHORT_FORM_BYPASS ||
+                event.type == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BYPASS ||
+                event.type == AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_BYPASS ||
+                event.type == AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_BYPASS
+        }
+    }
+
+    private fun isBlockEventType(eventType: String): Boolean {
+        return eventType == AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK ||
+            eventType == AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK ||
+            eventType == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK ||
+            eventType == AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT ||
+            eventType == AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT
+    }
+
+    private fun isBypassEventType(eventType: String): Boolean {
+        return eventType == AppGuardAccessibilityService.STATS_EVENT_SHORT_FORM_BYPASS ||
+            eventType == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BYPASS ||
+            eventType == AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_BYPASS ||
+            eventType == AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_BYPASS
+    }
+
+    private fun emptyTimeOfDayCounts(): Map<String, Int> {
+        return linkedMapOf(
+            "Morning" to 0,
+            "Afternoon" to 0,
+            "Evening" to 0,
+            "Late Night" to 0,
+        )
+    }
+
+    private fun timeOfDayBucketLabel(timestamp: Long): String {
+        val hour = Calendar.getInstance().apply {
+            timeInMillis = timestamp
+        }.get(Calendar.HOUR_OF_DAY)
+        return when {
+            hour in 5 until 12 -> "Morning"
+            hour in 12 until 17 -> "Afternoon"
+            hour in 17 until 22 -> "Evening"
+            else -> "Late Night"
+        }
+    }
+
+    private fun buildTimeOfDayBuckets(events: List<StatsEvent>): List<Map<String, Any>> {
+        val buckets = listOf(
+            Triple("Morning", 5, 12),
+            Triple("Afternoon", 12, 17),
+            Triple("Evening", 17, 22),
+            Triple("Late Night", 22, 29),
+        )
+        return buckets.map { (label, startHour, endHour) ->
+            val bucketEvents = events.filter { event ->
+                val hour = Calendar.getInstance().apply {
+                    timeInMillis = event.timestamp
+                }.get(Calendar.HOUR_OF_DAY)
+                if (endHour > 24) {
+                    hour >= startHour || hour < (endHour - 24)
+                } else {
+                    hour in startHour until endHour
+                }
+            }
+            mapOf(
+                "label" to label,
+                "blocks" to countBlockEvents(bucketEvents),
+                "bypasses" to countBypassEvents(bucketEvents),
+            )
+        }
+    }
+
+    private fun getStatisticsAppDefinitions(): List<StatisticsAppDefinition> {
+        val groupedApps = linkedMapOf<String, MutableList<Map<String, Any>>>()
+        for (app in getInstalledApps()) {
+            val packageName = app["packageName"] as? String ?: continue
+            val appName = app["appName"] as? String ?: packageName
+            val id = statisticsAppIdForPackage(packageName)
+            groupedApps.getOrPut(id) { mutableListOf() }.add(
+                mapOf(
+                    "packageName" to packageName,
+                    "appName" to appName,
+                ),
+            )
+        }
+
+        return groupedApps.entries.map { (id, apps) ->
+            val packageNames = apps.mapNotNull { it["packageName"] as? String }.toSet()
+            val preferredPackageName = when {
+                id == "youtube" && packageNames.contains("com.google.android.youtube") ->
+                    "com.google.android.youtube"
+                id == "instagram" && packageNames.contains("com.instagram.android") ->
+                    "com.instagram.android"
+                else -> packageNames.firstOrNull().orEmpty()
+            }
+            val appName = when (id) {
+                "instagram" -> "Instagram"
+                "youtube" -> "YouTube"
+                else -> (apps.firstOrNull()?.get("appName") as? String).orEmpty()
+            }
+            StatisticsAppDefinition(
+                id = id,
+                appName = appName.ifBlank { preferredPackageName },
+                packageName = preferredPackageName,
+                matcher = { candidate -> packageNames.contains(candidate) },
+            )
+        }
+    }
+
+    private fun statisticsAppIdForPackage(packageName: String): String {
+        val packageLower = packageName.lowercase()
+        if (
+            packageLower == "com.google.android.youtube" ||
+            packageLower.startsWith("app.revanced.android.youtube")
+        ) {
+            return "youtube"
+        }
+        if (packageLower == "com.instagram.android") {
+            return "instagram"
+        }
+        return packageName
+    }
+
+    private fun trackedMinutesForAppDefinition(
+        definition: StatisticsAppDefinition,
+        usageByPackage: Map<String, Long>,
+    ): Int {
+        return usageByPackage.entries.sumOf { entry ->
+            if (definition.matches(entry.key)) {
+                (entry.value / 60000L).toInt()
+            } else {
+                0
+            }
+        }
+    }
+
+    private fun getForegroundMillisForAppDefinition(
+        definition: StatisticsAppDefinition,
+        startTime: Long,
+        endTime: Long,
+    ): Long {
+        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
+        val event = UsageEvents.Event()
+        val activeStartTimes = mutableMapOf<String, Long>()
+        var totalMillis = 0L
+
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            val packageName = event.packageName ?: continue
+            if (shouldIgnoreUsagePackage(packageName)) continue
+            if (!definition.matches(packageName)) continue
+
+            when (event.eventType) {
+                UsageEvents.Event.ACTIVITY_RESUMED,
+                UsageEvents.Event.MOVE_TO_FOREGROUND,
+                -> {
+                    activeStartTimes[packageName] = event.timeStamp
+                }
+
+                UsageEvents.Event.ACTIVITY_PAUSED,
+                UsageEvents.Event.MOVE_TO_BACKGROUND,
+                -> {
+                    val start = activeStartTimes.remove(packageName) ?: continue
+                    if (event.timeStamp > start) {
+                        totalMillis += event.timeStamp - start
+                    }
+                }
+            }
+        }
+
+        activeStartTimes.values.forEach { start ->
+            if (endTime > start) {
+                totalMillis += endTime - start
+            }
+        }
+
+        return totalMillis
+    }
+
+    private fun getForegroundEntryCountForAppDefinition(
+        definition: StatisticsAppDefinition,
+        startTime: Long,
+        endTime: Long,
+    ): Int {
+        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
+        val event = UsageEvents.Event()
+        var count = 0
+
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            val packageName = event.packageName ?: continue
+            if (!definition.matches(packageName)) continue
+            if (
+                event.eventType == UsageEvents.Event.ACTIVITY_RESUMED ||
+                    event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND
+            ) {
+                count++
+            }
+        }
+
+        return count
+    }
+
+    private fun getForegroundSessionStatsForDefinitions(
+        definitions: List<StatisticsAppDefinition>,
+        startTime: Long,
+        endTime: Long,
+    ): SessionStats {
+        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
+        val event = UsageEvents.Event()
+        val activeStartTimesByPackage = mutableMapOf<String, Long>()
+        val activeAppIdByPackage = mutableMapOf<String, String>()
+        val countsByAppId = mutableMapOf<String, Int>()
+        val longestSessionMinutesByAppId = mutableMapOf<String, Int>()
+
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            val packageName = event.packageName ?: continue
+            val definition = definitions.firstOrNull { it.matches(packageName) } ?: continue
+
+            when (event.eventType) {
+                UsageEvents.Event.ACTIVITY_RESUMED,
+                UsageEvents.Event.MOVE_TO_FOREGROUND,
+                -> {
+                    countsByAppId[definition.id] = (countsByAppId[definition.id] ?: 0) + 1
+                    activeStartTimesByPackage[packageName] = event.timeStamp
+                    activeAppIdByPackage[packageName] = definition.id
+                }
+
+                UsageEvents.Event.ACTIVITY_PAUSED,
+                UsageEvents.Event.MOVE_TO_BACKGROUND,
+                -> {
+                    val start = activeStartTimesByPackage.remove(packageName) ?: continue
+                    val appId = activeAppIdByPackage.remove(packageName) ?: continue
+                    if (event.timeStamp <= start) continue
+                    val durationMinutes = ((event.timeStamp - start) / 60000L).toInt()
+                    if (durationMinutes > (longestSessionMinutesByAppId[appId] ?: 0)) {
+                        longestSessionMinutesByAppId[appId] = durationMinutes
+                    }
+                }
+            }
+        }
+
+        activeStartTimesByPackage.forEach { (packageName, start) ->
+            val appId = activeAppIdByPackage[packageName] ?: return@forEach
+            if (endTime <= start) return@forEach
+            val durationMinutes = ((endTime - start) / 60000L).toInt()
+            if (durationMinutes > (longestSessionMinutesByAppId[appId] ?: 0)) {
+                longestSessionMinutesByAppId[appId] = durationMinutes
+            }
+        }
+
+        return SessionStats(
+            countsByAppId = countsByAppId,
+            longestSessionMinutesByAppId = longestSessionMinutesByAppId,
+        )
+    }
+
+    private fun getStreakStatistics(): Pair<Int, Int> {
+        val firstInstallTime = packageManager.getPackageInfo(packageName, 0).firstInstallTime
+        val firstTrackableDate = Calendar.getInstance().apply {
+            timeInMillis = firstInstallTime
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val todayStart = getTodayWindow().first
+        val statuses = getScrollDayStatuses()
+
+        var current = 0
+        var cursor = todayStart
+        while (cursor >= firstTrackableDate) {
+            val status = statuses[dateKeyForMillis(cursor)] ?: 3
+            if (status != 1) break
+            current++
+            cursor -= DAY_IN_MILLIS
+        }
+
+        var longest = 0
+        var running = 0
+        var day = firstTrackableDate
+        while (day <= todayStart) {
+            val status = statuses[dateKeyForMillis(day)] ?: 3
+            if (status == 1) {
+                running++
+                if (running > longest) longest = running
+            } else {
+                running = 0
+            }
+            day += DAY_IN_MILLIS
+        }
+
+        return current to longest
+    }
+
+    private fun startOfDay(millis: Long): Long {
+        return Calendar.getInstance().apply {
+            timeInMillis = millis
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+
+    private fun dateKeyForMillis(millis: Long): String {
+        val calendar = Calendar.getInstance().apply {
+            timeInMillis = millis
+        }
+        val year = calendar.get(Calendar.YEAR).toString().padStart(4, '0')
+        val month = (calendar.get(Calendar.MONTH) + 1).toString().padStart(2, '0')
+        val day = calendar.get(Calendar.DAY_OF_MONTH).toString().padStart(2, '0')
+        return "$year-$month-$day"
     }
 
     private fun addTrackedDuration(
@@ -1104,6 +1968,28 @@ open class MainActivity : FlutterActivity() {
         val target: String,
         val startMillis: Long,
         val endMillis: Long,
+    )
+
+    private data class StatsEvent(
+        val timestamp: Long,
+        val type: String,
+        val packageName: String,
+        val target: String,
+        val metadata: JSONObject,
+    )
+
+    private data class StatisticsAppDefinition(
+        val id: String,
+        val appName: String,
+        val packageName: String,
+        val matcher: (String) -> Boolean,
+    ) {
+        fun matches(candidate: String): Boolean = matcher(candidate)
+    }
+
+    private data class SessionStats(
+        val countsByAppId: Map<String, Int>,
+        val longestSessionMinutesByAppId: Map<String, Int>,
     )
 
     private val builtInTrackedAppLimits = listOf(
