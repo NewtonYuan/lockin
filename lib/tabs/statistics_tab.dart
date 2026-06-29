@@ -511,6 +511,77 @@ class StatisticsTabState extends State<StatisticsTab> {
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.isUsageAccessAllowed) {
+      return CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          StickyHeaderSliver(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: StickyTitleHeader(
+                title: 'Statistics',
+                onBack: widget.onBackToHome,
+                centerTitle: false,
+              ),
+            ),
+          ),
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 340),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.error_outline_rounded,
+                        color: Color(0xFFC65A43),
+                        size: 34,
+                      ),
+                      const SizedBox(height: 14),
+                      const Text(
+                        'Please enable usage access to view your statistics',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: appText,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: widget.onOpenUsageAccessSettings,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: brand,
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text(
+                            'Enable Usage Access',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     if (widget.isLoading) {
       return RefreshIndicator(
         color: brand,
@@ -611,10 +682,6 @@ class StatisticsTabState extends State<StatisticsTab> {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                if (!widget.isUsageAccessAllowed) ...[
-                  _PermissionBanner(onTap: widget.onOpenUsageAccessSettings),
-                  const SizedBox(height: 12),
-                ],
                 Row(
                   children: [
                     Expanded(
@@ -893,61 +960,6 @@ class StatisticsTabState extends State<StatisticsTab> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _PermissionBanner extends StatelessWidget {
-  const _PermissionBanner({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: const Color(0xFFFFF4F2),
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-          child: Row(
-            children: [
-              Icon(
-                Icons.error_outline_rounded,
-                color: Color(0xFFC65A43),
-                size: 18,
-              ),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Usage Access is off',
-                  style: TextStyle(
-                    color: Color(0xFFC65A43),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              Text(
-                'Fix',
-                style: TextStyle(
-                  color: Color(0xFFC65A43),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              SizedBox(width: 2),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: Color(0xFFC65A43),
-                size: 18,
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

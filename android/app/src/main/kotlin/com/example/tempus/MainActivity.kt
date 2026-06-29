@@ -19,8 +19,9 @@ import android.os.Looper
 import android.provider.Settings
 import android.os.Process
 import android.util.Base64
+import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
@@ -29,7 +30,7 @@ import java.util.concurrent.Executors
 import org.json.JSONArray
 import org.json.JSONObject
 
-open class MainActivity : FlutterActivity() {
+open class MainActivity : FlutterFragmentActivity() {
     companion object {
         const val ACCESSIBILITY_CHANNEL_NAME = "tempus/accessibility"
         private const val PENDING_SHARED_WEBSITE_PREF_KEY = "pending_shared_website"
@@ -112,6 +113,7 @@ open class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         handleIncomingShareIntent(intent)
     }

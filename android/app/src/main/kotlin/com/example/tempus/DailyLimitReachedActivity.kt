@@ -1,6 +1,5 @@
 package com.prestige.tempus
 
-import android.app.Activity
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -18,8 +17,9 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.ComponentActivity
 
-class DailyLimitReachedActivity : Activity() {
+class DailyLimitReachedActivity : ComponentActivity() {
     private val sourcePackageName: String?
         get() = intent?.getStringExtra(EXTRA_SOURCE_PACKAGE_NAME)
 
@@ -30,7 +30,7 @@ class DailyLimitReachedActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.setBackgroundDrawableResource(android.R.color.transparent)
+        configureEdgeToEdgePromptWindow()
         setPromptContent(createConfirmationView())
         overridePendingTransition(R.anim.prompt_fade_in, R.anim.prompt_fade_out)
     }
@@ -161,6 +161,7 @@ class DailyLimitReachedActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(24), dp(48), dp(24), dp(48))
+            applySystemBarPadding()
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,

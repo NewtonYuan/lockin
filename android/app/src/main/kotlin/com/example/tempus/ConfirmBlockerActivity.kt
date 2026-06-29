@@ -1,6 +1,5 @@
 package com.prestige.tempus
 
-import android.app.Activity
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -20,8 +19,9 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.ComponentActivity
 
-class ConfirmBlockerActivity : Activity() {
+class ConfirmBlockerActivity : ComponentActivity() {
     private val minuteOptions = intArrayOf(1, 2, 3, 5, 10, 15, 30, 60)
     private var bypassCountdown: CountDownTimer? = null
 
@@ -44,7 +44,7 @@ class ConfirmBlockerActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.setBackgroundDrawableResource(android.R.color.transparent)
+        configureEdgeToEdgePromptWindow()
         setPromptContent(createConfirmationView())
         overridePendingTransition(R.anim.prompt_fade_in, R.anim.prompt_fade_out)
     }
@@ -339,6 +339,7 @@ class ConfirmBlockerActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(24), dp(48), dp(24), dp(48))
+            applySystemBarPadding()
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,

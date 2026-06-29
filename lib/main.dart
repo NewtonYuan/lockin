@@ -102,7 +102,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _pageController = PageController();
     WidgetsBinding.instance.addObserver(this);
     _premiumService.addListener(_handlePremiumStateChanged);
-    _premiumService.initialize();
     _refreshAccessibilityStatus();
     _refreshUsageAccessStatus();
     _loadOnboardingState();
@@ -377,6 +376,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _refreshUsageAccessStatus() async {
     try {
+      final previousValue = _isUsageAccessEnabled;
       final enabled = await _accessibilityChannel.invokeMethod<bool>(
         'isUsageAccessEnabled',
       );
@@ -393,6 +393,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _onboardingStep = OnboardingStep.allDone;
         }
       });
+      if ((enabled ?? false) && previousValue != true && _selectedIndex == 2) {
+        _loadStatisticsTabData(force: true);
+      }
       await _consumeUsageAccessEnabledSuccess();
     } on PlatformException {
       if (!mounted) return;
@@ -465,6 +468,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _loadStatisticsTabData({bool force = false}) async {
+    if (_isUsageAccessEnabled != true) {
+      if (mounted && _isStatisticsLoading) {
+        setState(() {
+          _isStatisticsLoading = false;
+        });
+      }
+      return;
+    }
+
     if (_isStatisticsLoading) return;
     if (!force && !_statisticsNeedsRefresh && _statisticsSnapshot != null) {
       return;
