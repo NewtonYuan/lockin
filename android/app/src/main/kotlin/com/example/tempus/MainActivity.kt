@@ -37,11 +37,19 @@ open class MainActivity : FlutterActivity() {
         private const val ACCESSIBILITY_WATCH_INTERVAL_MILLIS = 500L
         private const val USAGE_ACCESS_WATCH_INTERVAL_MILLIS = 500L
         private const val DAY_IN_MILLIS = 24L * 60L * 60L * 1000L
+        private const val BLOCK_EVENT_DEDUPLICATION_WINDOW_MILLIS = 2000L
     }
+
+    private data class ForegroundUsageSummary(
+        val totalsByPackage: Map<String, Long>,
+        val hourlyTrackedMinutes: List<Int>,
+        val hourlyTrackedMinutesByPackage: Map<String, List<Int>>,
+    )
 
     private val scrollDayStatusesPrefKey = "scroll_day_statuses"
     private val customTrackedAppsPrefKey = "custom_tracked_apps"
     private val appLoadingExecutor = Executors.newSingleThreadExecutor()
+    private val statisticsLoadingExecutor = Executors.newSingleThreadExecutor()
     private val accessibilityWatcherHandler = Handler(Looper.getMainLooper())
     private val accessibilityEnableWatcher = object : Runnable {
         override fun run() {
@@ -187,7 +195,23 @@ open class MainActivity : FlutterActivity() {
                     result.success(getTodayScrollHeuristicMetrics())
                 }
                 "getStatisticsData" -> {
-                    result.success(getStatisticsData())
+                    statisticsLoadingExecutor.execute {
+                        runCatching {
+                            getStatisticsData()
+                        }.onSuccess { statisticsData ->
+                            runOnUiThread {
+                                result.success(statisticsData)
+                            }
+                        }.onFailure { error ->
+                            runOnUiThread {
+                                result.error(
+                                    "statistics_data_failed",
+                                    error.message ?: "Failed to load statistics data",
+                                    null,
+                                )
+                            }
+                        }
+                    }
                 }
                 "setDailyTimeLimit" -> {
                     val settingKey = call.argument<String>("settingKey")
@@ -622,11 +646,12 @@ open class MainActivity : FlutterActivity() {
         for (offset in 29 downTo 0) {
             val dayStart = startOfDay(todayStart - (offset.toLong() * DAY_IN_MILLIS))
             val dayEnd = minOf(dayStart + DAY_IN_MILLIS, now)
-            val usageByPackage = if (usageEnabled) {
-                getAllForegroundMillisByPackage(dayStart, dayEnd)
+            val foregroundUsageSummary = if (usageEnabled) {
+                getForegroundUsageSummary(dayStart, dayEnd)
             } else {
-                emptyMap()
+                ForegroundUsageSummary(emptyMap(), List(24) { 0 }, emptyMap())
             }
+            val usageByPackage = foregroundUsageSummary.totalsByPackage
             val dayEvents = statsEvents.filter { event ->
                 event.timestamp in dayStart until dayEnd
             }
@@ -674,6 +699,18 @@ open class MainActivity : FlutterActivity() {
             val appSessionCounts = buildMap<String, Int> {
                 for (definition in appDefinitions) {
                     put(definition.id, sessionStats.countsByAppId[definition.id] ?: 0)
+                }
+            }
+            val appHourlyTrackedMinutes = buildMap<String, List<Int>> {
+                for (definition in appDefinitions) {
+                    put(
+                        definition.id,
+                        hourlyTrackedMinutesForAppDefinition(
+                            definition = definition,
+                            hourlyTrackedMinutesByPackage =
+                                foregroundUsageSummary.hourlyTrackedMinutesByPackage,
+                        ),
+                    )
                 }
             }
             val appLongestSessionMinutes = buildMap<String, Int> {
@@ -743,6 +780,7 @@ open class MainActivity : FlutterActivity() {
                 mapOf(
                     "dateKey" to dateKeyForMillis(dayStart),
                     "trackedMinutes" to trackedMinutes,
+                    "hourlyTrackedMinutes" to foregroundUsageSummary.hourlyTrackedMinutes,
                     "blocks" to countBlockEvents(dayEvents),
                     "bypasses" to countBypassEvents(dayEvents),
                     "reelsBlocks" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK),
@@ -757,6 +795,7 @@ open class MainActivity : FlutterActivity() {
                     "sessionCount" to appSessionCounts.values.sum(),
                     "longestSessionMinutes" to (appLongestSessionMinutes.values.maxOrNull() ?: 0),
                     "appMinutes" to appMinutes,
+                    "appHourlyTrackedMinutes" to appHourlyTrackedMinutes,
                     "appSessionCounts" to appSessionCounts,
                     "appLongestSessionMinutes" to appLongestSessionMinutes,
                     "appReelsBlocks" to appReelsBlocks,
@@ -1115,6 +1154,136 @@ open class MainActivity : FlutterActivity() {
         return totalsByPackage
     }
 
+    private fun getForegroundUsageSummary(
+        startTime: Long,
+        endTime: Long,
+    ): ForegroundUsageSummary {
+        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
+        val event = UsageEvents.Event()
+        var currentForegroundPackage: String? = null
+        var currentForegroundStart = 0L
+        val totalsByPackage = mutableMapOf<String, Long>()
+        val hourlyTrackedMinutes = MutableList(24) { 0 }
+        val hourlyTrackedMinutesByPackage = mutableMapOf<String, MutableList<Int>>()
+
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            val packageName = event.packageName ?: continue
+            if (shouldIgnoreUsagePackage(packageName)) continue
+
+            when (event.eventType) {
+                UsageEvents.Event.ACTIVITY_RESUMED,
+                UsageEvents.Event.MOVE_TO_FOREGROUND,
+                -> {
+                    if (
+                        currentForegroundPackage != null &&
+                        event.timeStamp > currentForegroundStart
+                    ) {
+                        addUsageSummaryDuration(
+                            packageName = currentForegroundPackage!!,
+                            startTime = currentForegroundStart,
+                            endTime = event.timeStamp,
+                            totalsByPackage = totalsByPackage,
+                            hourlyTrackedMinutes = hourlyTrackedMinutes,
+                            hourlyTrackedMinutesByPackage = hourlyTrackedMinutesByPackage,
+                        )
+                    }
+                    currentForegroundPackage = packageName
+                    currentForegroundStart = event.timeStamp
+                }
+
+                UsageEvents.Event.ACTIVITY_PAUSED,
+                UsageEvents.Event.MOVE_TO_BACKGROUND,
+                -> {
+                    if (
+                        currentForegroundPackage == packageName &&
+                        event.timeStamp > currentForegroundStart
+                    ) {
+                        addUsageSummaryDuration(
+                            packageName = packageName,
+                            startTime = currentForegroundStart,
+                            endTime = event.timeStamp,
+                            totalsByPackage = totalsByPackage,
+                            hourlyTrackedMinutes = hourlyTrackedMinutes,
+                            hourlyTrackedMinutesByPackage = hourlyTrackedMinutesByPackage,
+                        )
+                        currentForegroundPackage = null
+                        currentForegroundStart = 0L
+                    }
+                }
+            }
+        }
+
+        if (currentForegroundPackage != null && endTime > currentForegroundStart) {
+            addUsageSummaryDuration(
+                packageName = currentForegroundPackage!!,
+                startTime = currentForegroundStart,
+                endTime = endTime,
+                totalsByPackage = totalsByPackage,
+                hourlyTrackedMinutes = hourlyTrackedMinutes,
+                hourlyTrackedMinutesByPackage = hourlyTrackedMinutesByPackage,
+            )
+        }
+
+        return ForegroundUsageSummary(
+            totalsByPackage = totalsByPackage,
+            hourlyTrackedMinutes = hourlyTrackedMinutes,
+            hourlyTrackedMinutesByPackage = hourlyTrackedMinutesByPackage,
+        )
+    }
+
+    private fun addUsageSummaryDuration(
+        packageName: String,
+        startTime: Long,
+        endTime: Long,
+        totalsByPackage: MutableMap<String, Long>,
+        hourlyTrackedMinutes: MutableList<Int>,
+        hourlyTrackedMinutesByPackage: MutableMap<String, MutableList<Int>>,
+    ) {
+        val duration = endTime - startTime
+        if (duration <= 0L) return
+
+        totalsByPackage[packageName] = (totalsByPackage[packageName] ?: 0L) + duration
+        val packageHourlyMinutes = hourlyTrackedMinutesByPackage.getOrPut(packageName) {
+            MutableList(24) { 0 }
+        }
+
+        var current = startTime
+        while (current < endTime) {
+            val calendar = Calendar.getInstance().apply {
+                timeInMillis = current
+            }
+            val hour = calendar.get(Calendar.HOUR_OF_DAY)
+            calendar.add(Calendar.HOUR_OF_DAY, 1)
+            calendar.set(Calendar.MINUTE, 0)
+            calendar.set(Calendar.SECOND, 0)
+            calendar.set(Calendar.MILLISECOND, 0)
+            val nextHourStart = calendar.timeInMillis
+            val segmentEnd = minOf(endTime, nextHourStart)
+            val minutes = ((segmentEnd - current) / 60000L).toInt()
+            if (minutes > 0) {
+                hourlyTrackedMinutes[hour] = hourlyTrackedMinutes[hour] + minutes
+                packageHourlyMinutes[hour] = packageHourlyMinutes[hour] + minutes
+            }
+            current = segmentEnd
+        }
+    }
+
+    private fun hourlyTrackedMinutesForAppDefinition(
+        definition: StatisticsAppDefinition,
+        hourlyTrackedMinutesByPackage: Map<String, List<Int>>,
+    ): List<Int> {
+        val totals = MutableList(24) { 0 }
+        for ((packageName, hourlyMinutes) in hourlyTrackedMinutesByPackage) {
+            if (!definition.matches(packageName)) continue
+            for (hour in 0 until minOf(24, hourlyMinutes.size)) {
+                totals[hour] = totals[hour] + hourlyMinutes[hour]
+            }
+        }
+        return totals
+    }
+
     private fun getForegroundMillisForAppLimit(
         appLimit: AppLimit,
         startTime: Long,
@@ -1319,7 +1488,7 @@ open class MainActivity : FlutterActivity() {
         val serialized = prefs.getString(AppGuardAccessibilityService.STATS_EVENT_LOG_PREF_KEY, null)
             ?: return emptyList()
         val jsonArray = JSONArray(serialized)
-        return List(jsonArray.length()) { index ->
+        val events = List(jsonArray.length()) { index ->
             val entry = jsonArray.optJSONObject(index) ?: JSONObject()
             StatsEvent(
                 timestamp = entry.optLong("timestamp"),
@@ -1331,6 +1500,46 @@ open class MainActivity : FlutterActivity() {
         }.filter { event ->
             event.timestamp > 0L && event.type.isNotBlank()
         }
+        return deduplicateStatsEvents(events)
+    }
+
+    private fun deduplicateStatsEvents(events: List<StatsEvent>): List<StatsEvent> {
+        if (events.isEmpty()) return events
+
+        val sortedEvents = events.sortedBy { event -> event.timestamp }
+        val deduplicatedEvents = mutableListOf<StatsEvent>()
+        val lastBlockTimestampByKey = mutableMapOf<String, Long>()
+
+        for (event in sortedEvents) {
+            if (!isBlockEventType(event.type)) {
+                deduplicatedEvents.add(event)
+                continue
+            }
+
+            val key = buildBlockEventDeduplicationKey(event)
+            val lastTimestamp = lastBlockTimestampByKey[key]
+            if (
+                lastTimestamp != null &&
+                    event.timestamp - lastTimestamp <= BLOCK_EVENT_DEDUPLICATION_WINDOW_MILLIS
+            ) {
+                continue
+            }
+
+            lastBlockTimestampByKey[key] = event.timestamp
+            deduplicatedEvents.add(event)
+        }
+
+        return deduplicatedEvents
+    }
+
+    private fun buildBlockEventDeduplicationKey(event: StatsEvent): String {
+        val domain = event.metadata.optString("domain").trim().lowercase()
+        return listOf(
+            event.type,
+            event.packageName,
+            event.target,
+            domain,
+        ).joinToString(separator = "|")
     }
 
     private fun summarizeEventsByType(events: List<StatsEvent>): Map<String, Int> {
@@ -1355,9 +1564,7 @@ open class MainActivity : FlutterActivity() {
         return events.count { event ->
             event.type == AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK ||
                 event.type == AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK ||
-                event.type == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK ||
-                event.type == AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT ||
-                event.type == AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT
+                event.type == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK
         }
     }
 
@@ -1373,9 +1580,7 @@ open class MainActivity : FlutterActivity() {
     private fun isBlockEventType(eventType: String): Boolean {
         return eventType == AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK ||
             eventType == AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK ||
-            eventType == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK ||
-            eventType == AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT ||
-            eventType == AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT
+            eventType == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK
     }
 
     private fun isBypassEventType(eventType: String): Boolean {
@@ -1554,10 +1759,7 @@ open class MainActivity : FlutterActivity() {
             usageEvents.getNextEvent(event)
             val packageName = event.packageName ?: continue
             if (!definition.matches(packageName)) continue
-            if (
-                event.eventType == UsageEvents.Event.ACTIVITY_RESUMED ||
-                    event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND
-            ) {
+            if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
                 count++
             }
         }
@@ -1587,7 +1789,12 @@ open class MainActivity : FlutterActivity() {
                 UsageEvents.Event.ACTIVITY_RESUMED,
                 UsageEvents.Event.MOVE_TO_FOREGROUND,
                 -> {
-                    countsByAppId[definition.id] = (countsByAppId[definition.id] ?: 0) + 1
+                    if (
+                        event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND &&
+                            !activeStartTimesByPackage.containsKey(packageName)
+                    ) {
+                        countsByAppId[definition.id] = (countsByAppId[definition.id] ?: 0) + 1
+                    }
                     activeStartTimesByPackage[packageName] = event.timeStamp
                     activeAppIdByPackage[packageName] = definition.id
                 }
@@ -1950,6 +2157,7 @@ open class MainActivity : FlutterActivity() {
         accessibilityWatcherHandler.removeCallbacks(accessibilityEnableWatcher)
         usageAccessWatcherHandler.removeCallbacks(usageAccessEnableWatcher)
         appLoadingExecutor.shutdownNow()
+        statisticsLoadingExecutor.shutdownNow()
         super.onDestroy()
     }
 

@@ -522,6 +522,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _openStatisticsForUsageSegment(AppUsageSegment segment) async {
+    if (segment.packageName.trim().isEmpty || segment.packageName == 'other') {
+      return;
+    }
+    await _fadeToTab(2);
+    await _loadStatisticsTabData();
+    while (mounted && _isStatisticsLoading) {
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+    }
+    if (!mounted || _selectedIndex != 2) return;
+    for (var attempt = 0; attempt < 6; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+      if (!mounted || _selectedIndex != 2) return;
+      final didOpen = _statisticsTabKey.currentState?.openAppForPackageName(
+        segment.packageName,
+      );
+      if (didOpen == true) {
+        return;
+      }
+    }
+  }
+
   Future<void> _loadSavedBlockConfig() async {
     try {
       final savedConfig = await _accessibilityChannel
@@ -1004,6 +1026,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             appName: (appName == null || appName.isEmpty)
                 ? packageName
                 : appName,
+            packageName: packageName,
             minutes: minutes,
             color: _colorForPackageName(packageName),
           );
@@ -1032,6 +1055,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       majorSegments.add(
         AppUsageSegment(
           appName: 'Other',
+          packageName: 'other',
           minutes: otherMinutes,
           color: appSurfaceStrong,
         ),
@@ -1218,6 +1242,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             },
           );
         },
+        onOpenUsageAppStatistics: (segment) {
+          _openStatisticsForUsageSegment(segment);
+        },
         onShareApp: () {
           _shareText(_shareAppMessage());
         },
@@ -1358,6 +1385,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         onBackToHome: () {
           _fadeToTab(0);
         },
+        onRefresh: () => _loadStatisticsTabData(force: true),
         statistics: _statisticsSnapshot,
         installedApps: _installedApps,
         isLoading: _isStatisticsLoading,

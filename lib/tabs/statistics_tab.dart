@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -120,6 +121,7 @@ class StatisticsDailyPoint {
   const StatisticsDailyPoint({
     required this.dateKey,
     required this.trackedMinutes,
+    required this.hourlyTrackedMinutes,
     required this.blocks,
     required this.bypasses,
     required this.reelsBlocks,
@@ -134,6 +136,7 @@ class StatisticsDailyPoint {
     required this.sessionCount,
     required this.longestSessionMinutes,
     required this.appMinutes,
+    required this.appHourlyTrackedMinutes,
     required this.appSessionCounts,
     required this.appLongestSessionMinutes,
     required this.appReelsBlocks,
@@ -151,6 +154,10 @@ class StatisticsDailyPoint {
     return StatisticsDailyPoint(
       dateKey: (map['dateKey'] as String?) ?? '',
       trackedMinutes: _readInt(map['trackedMinutes']),
+      hourlyTrackedMinutes: _readFixedIntList(
+        map['hourlyTrackedMinutes'],
+        expectedLength: 24,
+      ),
       blocks: _readInt(map['blocks']),
       bypasses: _readInt(map['bypasses']),
       reelsBlocks: _readInt(map['reelsBlocks']),
@@ -168,6 +175,12 @@ class StatisticsDailyPoint {
         for (final entry
             in (rawAppMinutes?.entries ?? <MapEntry<dynamic, dynamic>>[]))
           '${entry.key}': _readInt(entry.value),
+      },
+      appHourlyTrackedMinutes: {
+        for (final entry
+            in (((map['appHourlyTrackedMinutes'] as Map?)?.entries) ??
+                <MapEntry<dynamic, dynamic>>[]))
+          '${entry.key}': _readFixedIntList(entry.value, expectedLength: 24),
       },
       appSessionCounts: {
         for (final entry
@@ -234,6 +247,7 @@ class StatisticsDailyPoint {
 
   final String dateKey;
   final int trackedMinutes;
+  final List<int> hourlyTrackedMinutes;
   final int blocks;
   final int bypasses;
   final int reelsBlocks;
@@ -248,6 +262,7 @@ class StatisticsDailyPoint {
   final int sessionCount;
   final int longestSessionMinutes;
   final Map<String, int> appMinutes;
+  final Map<String, List<int>> appHourlyTrackedMinutes;
   final Map<String, int> appSessionCounts;
   final Map<String, int> appLongestSessionMinutes;
   final Map<String, int> appReelsBlocks;
@@ -434,6 +449,7 @@ class StatisticsTab extends StatefulWidget {
   const StatisticsTab({
     super.key,
     required this.onBackToHome,
+    required this.onRefresh,
     required this.statistics,
     required this.installedApps,
     required this.isLoading,
@@ -444,6 +460,7 @@ class StatisticsTab extends StatefulWidget {
   });
 
   final VoidCallback onBackToHome;
+  final Future<void> Function() onRefresh;
   final StatisticsSnapshot? statistics;
   final List<CustomTrackedApp> installedApps;
   final bool isLoading;
@@ -458,7 +475,7 @@ class StatisticsTab extends StatefulWidget {
 
 class StatisticsTabState extends State<StatisticsTab> {
   StatisticsApp? _selectedApp;
-  _AppDateRangePreset _selectedRangePreset = _AppDateRangePreset.last7Days;
+  _AppDateRangePreset _selectedRangePreset = _AppDateRangePreset.today;
   DateTimeRange? _customDateRange;
   _StatsAppFilter _selectedAppFilter = _StatsAppFilter.allApps;
 
@@ -469,50 +486,78 @@ class StatisticsTabState extends State<StatisticsTab> {
     });
   }
 
+  bool openAppForPackageName(String packageName) {
+    final normalizedPackageName = packageName.trim().toLowerCase();
+    if (normalizedPackageName.isEmpty || normalizedPackageName == 'other') {
+      return false;
+    }
+    final snapshot = _statisticsSnapshotForDisplay(
+      widget.statistics,
+      widget.installedApps,
+    );
+    final selectedApp = snapshot.apps.cast<StatisticsApp?>().firstWhere(
+      (app) =>
+          app != null &&
+          _statisticsAppIdForPackageName(app.packageName) ==
+              _statisticsAppIdForPackageName(normalizedPackageName),
+      orElse: () => null,
+    );
+    if (selectedApp == null) return false;
+    setState(() {
+      _selectedApp = selectedApp;
+    });
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (widget.isLoading && widget.statistics == null) {
-      return CustomScrollView(
-        slivers: [
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-          StickyHeaderSliver(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: StickyTitleHeader(
-                title: 'Statistics',
-                onBack: widget.onBackToHome,
-                centerTitle: false,
+    if (widget.isLoading) {
+      return RefreshIndicator(
+        color: brand,
+        onRefresh: widget.onRefresh,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            StickyHeaderSliver(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: StickyTitleHeader(
+                  title: 'Statistics',
+                  onBack: widget.onBackToHome,
+                  centerTitle: false,
+                ),
               ),
             ),
-          ),
-          const SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 26,
-                    height: 26,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.4,
-                      color: brand,
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 26,
+                      height: 26,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: brand,
+                      ),
                     ),
-                  ),
-                  SizedBox(height: 14),
-                  Text(
-                    'Loading statistics...',
-                    style: TextStyle(
-                      color: appMutedText,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
+                    SizedBox(height: 14),
+                    Text(
+                      'Loading statistics...',
+                      style: TextStyle(
+                        color: appMutedText,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       );
     }
 
@@ -545,300 +590,310 @@ class StatisticsTabState extends State<StatisticsTab> {
       );
     }
 
-    return CustomScrollView(
-      slivers: [
-        const SliverToBoxAdapter(child: SizedBox(height: 24)),
-        StickyHeaderSliver(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: StickyTitleHeader(
-              title: 'Statistics',
-              onBack: widget.onBackToHome,
-              centerTitle: false,
+    return RefreshIndicator(
+      color: brand,
+      onRefresh: widget.onRefresh,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          StickyHeaderSliver(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: StickyTitleHeader(
+                title: 'Statistics',
+                onBack: widget.onBackToHome,
+                centerTitle: false,
+              ),
             ),
           ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-          sliver: SliverList(
-            delegate: SliverChildListDelegate([
-              if (widget.isLoading) ...[
-                const _StatisticsLoadingBanner(),
-                const SizedBox(height: 12),
-              ],
-              if (!widget.isUsageAccessAllowed) ...[
-                _PermissionBanner(onTap: widget.onOpenUsageAccessSettings),
-                const SizedBox(height: 12),
-              ],
-              Row(
-                children: [
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: PopupMenuButton<_AppDateRangePreset>(
-                        onSelected: (preset) async {
-                          if (preset == _AppDateRangePreset.last365Days &&
-                              !widget.isPremium) {
-                            widget.onOpenPremium();
-                            return;
-                          }
-                          if (preset == _AppDateRangePreset.custom) {
-                            final range = await showDateRangePicker(
-                              context: context,
-                              firstDate: DateTime(2020),
-                              lastDate: DateTime.now(),
-                              initialDateRange:
-                                  _customDateRange ??
-                                  DateTimeRange(
-                                    start: DateTime.now().subtract(
-                                      const Duration(days: 6),
-                                    ),
-                                    end: DateTime.now(),
-                                  ),
-                            );
-                            if (!mounted || range == null) return;
-                            final selectedDays =
-                                range.end
-                                    .difference(range.start)
-                                    .inDays +
-                                1;
-                            if (!widget.isPremium && selectedDays > 31) {
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+                if (!widget.isUsageAccessAllowed) ...[
+                  _PermissionBanner(onTap: widget.onOpenUsageAccessSettings),
+                  const SizedBox(height: 12),
+                ],
+                Row(
+                  children: [
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: PopupMenuButton<_AppDateRangePreset>(
+                          onSelected: (preset) async {
+                            if ((preset == _AppDateRangePreset.lastMonth ||
+                                    preset ==
+                                        _AppDateRangePreset.last365Days) &&
+                                !widget.isPremium) {
                               widget.onOpenPremium();
+                              return;
+                            }
+                            if (preset == _AppDateRangePreset.custom) {
+                              final range = await showDateRangePicker(
+                                context: context,
+                                firstDate: DateTime(2020),
+                                lastDate: DateTime.now(),
+                                initialDateRange:
+                                    _customDateRange ??
+                                    DateTimeRange(
+                                      start: DateTime.now().subtract(
+                                        const Duration(days: 6),
+                                      ),
+                                      end: DateTime.now(),
+                                    ),
+                              );
+                              if (!mounted || range == null) return;
+                              final selectedDays =
+                                  range.end.difference(range.start).inDays + 1;
+                              if (!widget.isPremium && selectedDays > 31) {
+                                widget.onOpenPremium();
+                                return;
+                              }
+                              setState(() {
+                                _selectedRangePreset = preset;
+                                _customDateRange = range;
+                              });
                               return;
                             }
                             setState(() {
                               _selectedRangePreset = preset;
-                              _customDateRange = range;
+                              _customDateRange = null;
                             });
-                            return;
-                          }
-                          setState(() {
-                            _selectedRangePreset = preset;
-                            _customDateRange = null;
-                          });
-                        },
-                        itemBuilder: (context) => [
-                          for (final preset in [
-                            _AppDateRangePreset.today,
-                            _AppDateRangePreset.yesterday,
-                            _AppDateRangePreset.last7Days,
-                            _AppDateRangePreset.lastMonth,
-                            _AppDateRangePreset.last365Days,
-                          ])
-                            PopupMenuItem<_AppDateRangePreset>(
-                              value: preset,
-                              child: preset == _AppDateRangePreset.last365Days
-                                  ? Row(
-                                      children: [
-                                        SvgPicture.asset(
-                                          'assets/icons/diamond.svg',
-                                          width: 18,
-                                          height: 18,
-                                          colorFilter: const ColorFilter.mode(
-                                            appText,
-                                            BlendMode.srcIn,
+                          },
+                          itemBuilder: (context) => [
+                            for (final preset in [
+                              _AppDateRangePreset.today,
+                              _AppDateRangePreset.yesterday,
+                              _AppDateRangePreset.last7Days,
+                              _AppDateRangePreset.last14Days,
+                              _AppDateRangePreset.lastMonth,
+                              _AppDateRangePreset.last365Days,
+                            ])
+                              PopupMenuItem<_AppDateRangePreset>(
+                                value: preset,
+                                child:
+                                    preset == _AppDateRangePreset.lastMonth ||
+                                        preset ==
+                                            _AppDateRangePreset.last365Days
+                                    ? Row(
+                                        children: [
+                                          SvgPicture.asset(
+                                            'assets/icons/diamond.svg',
+                                            width: 18,
+                                            height: 18,
+                                            colorFilter: const ColorFilter.mode(
+                                              appText,
+                                              BlendMode.srcIn,
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(preset.label),
-                                      ],
-                                    )
-                                  : Text(preset.label),
+                                          const SizedBox(width: 8),
+                                          Text(preset.label),
+                                        ],
+                                      )
+                                    : Text(preset.label),
+                              ),
+                            const PopupMenuDivider(),
+                            PopupMenuItem<_AppDateRangePreset>(
+                              value: _AppDateRangePreset.custom,
+                              child: Row(
+                                children: [
+                                  SvgPicture.asset(
+                                    'assets/icons/date_range.svg',
+                                    width: 18,
+                                    height: 18,
+                                    colorFilter: const ColorFilter.mode(
+                                      appText,
+                                      BlendMode.srcIn,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Text('Custom'),
+                                ],
+                              ),
                             ),
-                          const PopupMenuDivider(),
-                          PopupMenuItem<_AppDateRangePreset>(
-                            value: _AppDateRangePreset.custom,
+                          ],
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: appSurface,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                             child: Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                SvgPicture.asset(
-                                  'assets/icons/date_range.svg',
-                                  width: 18,
-                                  height: 18,
-                                  colorFilter: const ColorFilter.mode(
-                                    appText,
-                                    BlendMode.srcIn,
+                                if (_selectedRangePreset ==
+                                        _AppDateRangePreset.lastMonth ||
+                                    _selectedRangePreset ==
+                                        _AppDateRangePreset.last365Days)
+                                  SvgPicture.asset(
+                                    'assets/icons/diamond.svg',
+                                    width: 18,
+                                    height: 18,
+                                    colorFilter: const ColorFilter.mode(
+                                      appText,
+                                      BlendMode.srcIn,
+                                    ),
+                                  )
+                                else
+                                  SvgPicture.asset(
+                                    'assets/icons/date_range.svg',
+                                    width: 18,
+                                    height: 18,
+                                    colorFilter: const ColorFilter.mode(
+                                      appText,
+                                      BlendMode.srcIn,
+                                    ),
+                                  ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _dateRangeLabel(
+                                    _selectedRangePreset,
+                                    _customDateRange,
+                                  ),
+                                  style: const TextStyle(
+                                    color: appText,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
-                                const SizedBox(width: 8),
-                                const Text('Custom'),
+                                const SizedBox(width: 6),
+                                const Icon(
+                                  Icons.expand_more_rounded,
+                                  color: appMutedText,
+                                  size: 18,
+                                ),
                               ],
                             ),
                           ),
-                        ],
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: appSurface,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    PopupMenuButton<_StatsAppFilter>(
+                      onSelected: (value) {
+                        setState(() {
+                          _selectedAppFilter = value;
+                        });
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem<_StatsAppFilter>(
+                          value: _StatsAppFilter.allApps,
+                          child: Text('All Apps'),
+                        ),
+                        PopupMenuItem<_StatsAppFilter>(
+                          value: _StatsAppFilter.onlyBlockedApps,
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              if (_selectedRangePreset ==
-                                  _AppDateRangePreset.last365Days)
-                                SvgPicture.asset(
-                                  'assets/icons/diamond.svg',
-                                  width: 18,
-                                  height: 18,
-                                  colorFilter: const ColorFilter.mode(
-                                    appText,
-                                    BlendMode.srcIn,
-                                  ),
-                                )
-                              else
-                                SvgPicture.asset(
-                                  'assets/icons/date_range.svg',
-                                  width: 18,
-                                  height: 18,
-                                  colorFilter: const ColorFilter.mode(
-                                    appText,
-                                    BlendMode.srcIn,
-                                  ),
+                              SvgPicture.asset(
+                                'assets/icons/block.svg',
+                                width: 14,
+                                height: 14,
+                                colorFilter: const ColorFilter.mode(
+                                  appText,
+                                  BlendMode.srcIn,
                                 ),
-                              const SizedBox(width: 8),
+                              ),
+                              const SizedBox(width: 3),
+                              const Text('Block Apps'),
+                            ],
+                          ),
+                        ),
+                      ],
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color:
+                              _selectedAppFilter ==
+                                  _StatsAppFilter.onlyBlockedApps
+                              ? appText.withValues(alpha: 0.94)
+                              : appSurface,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_selectedAppFilter ==
+                                _StatsAppFilter.onlyBlockedApps) ...[
+                              SvgPicture.asset(
+                                'assets/icons/block.svg',
+                                width: 14,
+                                height: 14,
+                                colorFilter: const ColorFilter.mode(
+                                  Colors.white,
+                                  BlendMode.srcIn,
+                                ),
+                              ),
+                              const SizedBox(width: 3),
+                              const Text(
+                                'Block Apps',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ] else
                               Text(
-                                _dateRangeLabel(
-                                  _selectedRangePreset,
-                                  _customDateRange,
-                                ),
+                                _selectedAppFilter.label,
                                 style: const TextStyle(
                                   color: appText,
                                   fontSize: 12,
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              const SizedBox(width: 6),
-                              const Icon(
-                                Icons.expand_more_rounded,
-                                color: appMutedText,
-                                size: 18,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  PopupMenuButton<_StatsAppFilter>(
-                    onSelected: (value) {
-                      setState(() {
-                        _selectedAppFilter = value;
-                      });
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem<_StatsAppFilter>(
-                        value: _StatsAppFilter.allApps,
-                        child: Text('All Apps'),
-                      ),
-                      PopupMenuItem<_StatsAppFilter>(
-                        value: _StatsAppFilter.onlyBlockedApps,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SvgPicture.asset(
-                              'assets/icons/block.svg',
-                              width: 14,
-                              height: 14,
-                              colorFilter: const ColorFilter.mode(
-                                appText,
-                                BlendMode.srcIn,
-                              ),
+                            const SizedBox(width: 6),
+                            Icon(
+                              Icons.expand_more_rounded,
+                              color:
+                                  _selectedAppFilter ==
+                                      _StatsAppFilter.onlyBlockedApps
+                                  ? Colors.white
+                                  : appMutedText,
+                              size: 18,
                             ),
-                            const SizedBox(width: 3),
-                            const Text('Block Apps'),
                           ],
                         ),
                       ),
-                    ],
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color:
-                            _selectedAppFilter ==
-                                _StatsAppFilter.onlyBlockedApps
-                            ? appText.withValues(alpha: 0.94)
-                            : appSurface,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_selectedAppFilter ==
-                              _StatsAppFilter.onlyBlockedApps) ...[
-                            SvgPicture.asset(
-                              'assets/icons/block.svg',
-                              width: 14,
-                              height: 14,
-                              colorFilter: const ColorFilter.mode(
-                                Colors.white,
-                                BlendMode.srcIn,
-                              ),
-                            ),
-                            const SizedBox(width: 3),
-                            const Text(
-                              'Block Apps',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ] else
-                            Text(
-                              _selectedAppFilter.label,
-                              style: const TextStyle(
-                                color: appText,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          const SizedBox(width: 6),
-                          Icon(
-                            Icons.expand_more_rounded,
-                            color:
-                                _selectedAppFilter ==
-                                    _StatsAppFilter.onlyBlockedApps
-                                ? Colors.white
-                                : appMutedText,
-                            size: 18,
-                          ),
-                        ],
-                      ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              _OverviewSection(
-                daily: appScopedDaily,
-                preset: _selectedRangePreset,
-                customDateRange: _customDateRange,
-              ),
-              const SizedBox(height: 8),
-              _AppsSection(
-                apps: visibleApps,
-                daily: filteredDaily,
-                onOpenApp: (app) {
-                  setState(() {
-                    _selectedApp = app;
-                  });
-                },
-              ),
-              const SizedBox(height: 8),
-              _TrendSection(daily: appScopedDaily),
-              const SizedBox(height: 8),
-              _AdvancedSection(statistics: snapshot, daily: filteredDaily),
-            ]),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                _OverviewSection(
+                  daily: appScopedDaily,
+                  preset: _selectedRangePreset,
+                  customDateRange: _customDateRange,
+                ),
+                const SizedBox(height: 8),
+                _AppsSection(
+                  apps: visibleApps,
+                  daily: filteredDaily,
+                  onOpenApp: (app) {
+                    setState(() {
+                      _selectedApp = app;
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                _TrendSection(
+                  daily: appScopedDaily,
+                  isPremium: widget.isPremium,
+                  onOpenPremium: widget.onOpenPremium,
+                ),
+                const SizedBox(height: 8),
+                _AdvancedSection(statistics: snapshot, daily: filteredDaily),
+              ]),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -892,44 +947,6 @@ class _PermissionBanner extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _StatisticsLoadingBanner extends StatelessWidget {
-  const _StatisticsLoadingBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: appSurface,
-      borderRadius: BorderRadius.circular(8),
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: brand,
-              ),
-            ),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Refreshing statistics...',
-                style: TextStyle(
-                  color: appText,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -1020,7 +1037,7 @@ class _OverviewSection extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(0, 10, 10, 10),
                     child: _OverviewInlineMetric(
-                      label: 'Total Sessions',
+                      label: 'Total Opens',
                       value: _formatGroupedInt(totalSessions),
                       delta: _buildMetricDelta(
                         currentValue: totalSessions.toDouble(),
@@ -1034,7 +1051,7 @@ class _OverviewSection extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(10, 10, 0, 10),
                     child: _OverviewInlineMetric(
-                      label: 'Daily Sessions',
+                      label: 'Daily Opens',
                       value: _formatDecimalMetric(
                         averageSessions,
                         decimalPlaces: 2,
@@ -1059,7 +1076,7 @@ class _OverviewSection extends StatelessWidget {
                     padding: const EdgeInsets.fromLTRB(0, 10, 10, 0),
                     child: _OverviewInlineMetric(
                       label: 'Total Blocks',
-                      value: _formatGroupedInt(totalBlocks),
+                      value: _formatTimesCount(totalBlocks),
                     ),
                   ),
                 ),
@@ -1069,7 +1086,7 @@ class _OverviewSection extends StatelessWidget {
                     padding: const EdgeInsets.fromLTRB(10, 10, 0, 0),
                     child: _OverviewInlineMetric(
                       label: 'Daily Blocks',
-                      value: _formatDecimalMetric(
+                      value: _formatTimesMetric(
                         averageBlocks,
                         decimalPlaces: 2,
                       ),
@@ -1105,17 +1122,17 @@ class _OverviewSummary {
 
 _OverviewSummary _overviewSummary(List<StatisticsDailyPoint> daily) {
   final totalMinutes = daily.fold<int>(
-      0,
-      (sum, day) => sum + day.trackedMinutes,
-    );
-    final averageMinutes = daily.isEmpty ? 0.0 : totalMinutes / daily.length;
-    final totalSessions = daily.fold<int>(
-      0,
-      (sum, day) => sum + day.sessionCount,
-    );
-    final averageSessions = daily.isEmpty ? 0.0 : totalSessions / daily.length;
-    final totalBlocks = daily.fold<int>(0, (sum, day) => sum + day.blocks);
-    final averageBlocks = daily.isEmpty ? 0.0 : totalBlocks / daily.length;
+    0,
+    (sum, day) => sum + day.trackedMinutes,
+  );
+  final averageMinutes = daily.isEmpty ? 0.0 : totalMinutes / daily.length;
+  final totalSessions = daily.fold<int>(
+    0,
+    (sum, day) => sum + day.sessionCount,
+  );
+  final averageSessions = daily.isEmpty ? 0.0 : totalSessions / daily.length;
+  final totalBlocks = daily.fold<int>(0, (sum, day) => sum + day.blocks);
+  final averageBlocks = daily.isEmpty ? 0.0 : totalBlocks / daily.length;
   return _OverviewSummary(
     totalMinutes: totalMinutes,
     averageMinutes: averageMinutes,
@@ -1127,73 +1144,136 @@ _OverviewSummary _overviewSummary(List<StatisticsDailyPoint> daily) {
 }
 
 class _TrendSection extends StatefulWidget {
-  const _TrendSection({required this.daily});
+  const _TrendSection({
+    required this.daily,
+    required this.isPremium,
+    required this.onOpenPremium,
+  });
 
   final List<StatisticsDailyPoint> daily;
+  final bool isPremium;
+  final VoidCallback onOpenPremium;
 
   @override
   State<_TrendSection> createState() => _TrendSectionState();
 }
 
 class _TrendSectionState extends State<_TrendSection> {
+  _BreakdownMode _mode = _BreakdownMode.weekly;
   int _selectedWeekOffset = 0;
+  int _selectedDayOffset = 0;
   int? _activeBarIndex;
 
   @override
   Widget build(BuildContext context) {
     final weekSlices = _buildDailyWeekSlices(widget.daily);
+    final effectiveWeekOffset = weekSlices.isEmpty
+        ? 0
+        : math.min(_selectedWeekOffset, weekSlices.length - 1);
     final selectedWeekIndex = weekSlices.isEmpty
         ? -1
-        : math.max(0, weekSlices.length - 1 - _selectedWeekOffset);
+        : math.max(0, weekSlices.length - 1 - effectiveWeekOffset);
     final selectedWeek = selectedWeekIndex >= 0
         ? weekSlices[selectedWeekIndex]
         : null;
-    final maxBarMinutes = selectedWeek == null
+    final last7Days = widget.daily.takeLast(7);
+    final effectiveDayOffset = last7Days.isEmpty
         ? 0
-        : selectedWeek.entries.fold<int>(
-            0,
-            (current, entry) =>
-                math.max(current, entry.day?.trackedMinutes ?? 0),
-          );
+        : math.min(_selectedDayOffset, last7Days.length - 1);
+    final selectedDayIndex = last7Days.isEmpty
+        ? -1
+        : math.max(0, last7Days.length - 1 - effectiveDayOffset);
+    final selectedDay = selectedDayIndex >= 0
+        ? last7Days[selectedDayIndex]
+        : null;
+    final isLockedWeek =
+        !widget.isPremium &&
+        selectedWeek != null &&
+        _isWeekOutsideFreeWindow(selectedWeek.entries.last.date);
+    final isLockedDay =
+        !widget.isPremium && selectedDay != null && !_isToday(selectedDay.date);
+    final maxBarMinutes = _mode == _BreakdownMode.weekly
+        ? selectedWeek == null
+              ? 0
+              : selectedWeek.entries.fold<int>(
+                  0,
+                  (current, entry) =>
+                      math.max(current, entry.day?.trackedMinutes ?? 0),
+                )
+        : selectedDay == null
+        ? 0
+        : selectedDay.hourlyTrackedMinutes.fold<int>(0, math.max);
     final guideValues = _buildChartGuideValues(maxBarMinutes);
     const plotHeight = 148.0;
     final scaleTop = guideValues.first;
-    final weekTotal = selectedWeek == null
-        ? 0
-        : selectedWeek.entries.fold<int>(
-            0,
-            (sum, entry) => sum + (entry.day?.trackedMinutes ?? 0),
-          );
-    final weekAverage =
-        selectedWeek == null ||
-            selectedWeek.entries.where((entry) => entry.day != null).isEmpty
+    final summaryTotal = _mode == _BreakdownMode.weekly
+        ? selectedWeek == null
+              ? 0
+              : selectedWeek.entries.fold<int>(
+                  0,
+                  (sum, entry) => sum + (entry.day?.trackedMinutes ?? 0),
+                )
+        : selectedDay?.trackedMinutes ?? 0;
+    final summaryAverage = _mode == _BreakdownMode.weekly
+        ? selectedWeek == null ||
+                  selectedWeek.entries
+                      .where((entry) => entry.day != null)
+                      .isEmpty
+              ? 0.0
+              : summaryTotal /
+                    selectedWeek.entries
+                        .where((entry) => entry.day != null)
+                        .length
+        : selectedDay == null
         ? 0.0
-        : weekTotal /
-              selectedWeek.entries.where((entry) => entry.day != null).length;
+        : summaryTotal / 24;
+    final chartLabel = _mode == _BreakdownMode.weekly
+        ? selectedWeek == null
+              ? 'No data'
+              : _weekRangeLabel(
+                  selectedWeek.entries.first.date,
+                  selectedWeek.entries.last.date,
+                )
+        : selectedDay == null
+        ? 'No data'
+        : _dayRangeLabel(selectedDay.date);
+    final barCount = _mode == _BreakdownMode.weekly
+        ? (selectedWeek?.entries.length ?? 0)
+        : (selectedDay?.hourlyTrackedMinutes.length ?? 0);
 
     return _StatsCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Weekly Breakdown',
-            style: TextStyle(
-              color: brand,
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-            ),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Breakdown',
+                  style: TextStyle(
+                    color: brand,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              _BreakdownModeMenu(
+                mode: _mode,
+                onSelected: (mode) {
+                  setState(() {
+                    _mode = mode;
+                    _activeBarIndex = null;
+                  });
+                },
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
                 child: Text(
-                  selectedWeek == null
-                      ? 'No activity yet'
-                      : _weekRangeLabel(
-                          selectedWeek.entries.first.date,
-                          selectedWeek.entries.last.date,
-                        ),
+                  chartLabel,
                   style: const TextStyle(
                     color: appText,
                     fontSize: 14,
@@ -1203,10 +1283,19 @@ class _TrendSectionState extends State<_TrendSection> {
               ),
               _WeekNavButton(
                 icon: Icons.chevron_left_rounded,
-                onTap: _selectedWeekOffset < weekSlices.length - 1
+                onTap: _mode == _BreakdownMode.weekly
+                    ? effectiveWeekOffset < weekSlices.length - 1
+                          ? () {
+                              setState(() {
+                                _selectedWeekOffset++;
+                                _activeBarIndex = null;
+                              });
+                            }
+                          : null
+                    : effectiveDayOffset < last7Days.length - 1
                     ? () {
                         setState(() {
-                          _selectedWeekOffset++;
+                          _selectedDayOffset++;
                           _activeBarIndex = null;
                         });
                       }
@@ -1215,10 +1304,19 @@ class _TrendSectionState extends State<_TrendSection> {
               const SizedBox(width: 6),
               _WeekNavButton(
                 icon: Icons.chevron_right_rounded,
-                onTap: _selectedWeekOffset > 0
+                onTap: _mode == _BreakdownMode.weekly
+                    ? effectiveWeekOffset > 0
+                          ? () {
+                              setState(() {
+                                _selectedWeekOffset--;
+                                _activeBarIndex = null;
+                              });
+                            }
+                          : null
+                    : effectiveDayOffset > 0
                     ? () {
                         setState(() {
-                          _selectedWeekOffset--;
+                          _selectedDayOffset--;
                           _activeBarIndex = null;
                         });
                       }
@@ -1227,261 +1325,532 @@ class _TrendSectionState extends State<_TrendSection> {
             ],
           ),
           const SizedBox(height: 14),
-          SizedBox(
-            height: 196,
-            child: selectedWeek == null
-                ? const Center(
-                    child: _EmptyLine(label: 'No data available yet.'),
-                  )
-                : Column(
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    height: 196,
+                    child: _mode == _BreakdownMode.weekly
+                        ? _buildWeeklyChart(
+                            selectedWeek: selectedWeek,
+                            guideValues: guideValues,
+                            plotHeight: plotHeight,
+                            scaleTop: scaleTop,
+                            barCount: barCount,
+                          )
+                        : _buildDailyChart(
+                            selectedDay: selectedDay,
+                            guideValues: guideValues,
+                            plotHeight: plotHeight,
+                            scaleTop: scaleTop,
+                            barCount: barCount,
+                          ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
                     children: [
                       Expanded(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            SizedBox(
-                              width: 22,
-                              child: LayoutBuilder(
-                                builder: (context, constraints) {
-                                  return Stack(
-                                    clipBehavior: Clip.none,
-                                    children: [
-                                      for (
-                                        var index = 0;
-                                        index < guideValues.length;
-                                        index++
-                                      )
-                                        Positioned(
-                                          left: 0,
-                                          right: 0,
-                                          top:
-                                              (constraints.maxHeight /
-                                                  (guideValues.length - 1)) *
-                                              index,
-                                          child: Transform.translate(
-                                            offset: const Offset(0, -10),
-                                            child: Text(
-                                              _formatGuideValue(
-                                                guideValues[index],
-                                              ),
-                                              textAlign: TextAlign.left,
-                                              style: const TextStyle(
-                                                color: appMutedText,
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  );
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: LayoutBuilder(
-                                builder: (context, constraints) {
-                                  final barCount = selectedWeek.entries.length;
-                                  return Stack(
-                                    clipBehavior: Clip.none,
-                                    children: [
-                                      for (
-                                        var index = 0;
-                                        index < guideValues.length;
-                                        index++
-                                      )
-                                        Positioned(
-                                          left: 0,
-                                          right: 0,
-                                          top:
-                                              (constraints.maxHeight /
-                                                  (guideValues.length - 1)) *
-                                              index,
-                                          child: Container(
-                                            height: 1,
-                                            color: appBorder,
-                                          ),
-                                        ),
-                                      if (_activeBarIndex != null)
-                                        Positioned(
-                                          left: _barTooltipLeft(
-                                            _activeBarIndex!,
-                                            barCount,
-                                            constraints.maxWidth,
-                                            _barTooltipLabel(
-                                              selectedWeek
-                                                  .entries[_activeBarIndex!]
-                                                  .day
-                                                  ?.trackedMinutes,
-                                            ),
-                                          ),
-                                          bottom:
-                                              _barHeightForMinutes(
-                                                selectedWeek
-                                                    .entries[_activeBarIndex!]
-                                                    .day
-                                                    ?.trackedMinutes,
-                                                scaleTop,
-                                                plotHeight,
-                                              ) +
-                                              8,
-                                          child: _BarTooltip(
-                                            label: _barTooltipLabel(
-                                              selectedWeek
-                                                  .entries[_activeBarIndex!]
-                                                  .day
-                                                  ?.trackedMinutes,
-                                            ),
-                                          ),
-                                        ),
-                                      Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.end,
-                                        children: [
-                                          for (
-                                            var index = 0;
-                                            index < selectedWeek.entries.length;
-                                            index++
-                                          )
-                                            Expanded(
-                                              child: Padding(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 1,
-                                                    ),
-                                                child: SizedBox.expand(
-                                                  child: GestureDetector(
-                                                    behavior:
-                                                        HitTestBehavior.opaque,
-                                                    onTap: () {
-                                                      setState(() {
-                                                        _activeBarIndex =
-                                                            _activeBarIndex ==
-                                                                index
-                                                            ? null
-                                                            : index;
-                                                      });
-                                                    },
-                                                    onLongPressStart: (_) {
-                                                      setState(() {
-                                                        _activeBarIndex = index;
-                                                      });
-                                                    },
-                                                    onLongPressEnd: (_) {
-                                                      setState(() {
-                                                        if (_activeBarIndex ==
-                                                            index) {
-                                                          _activeBarIndex =
-                                                              null;
-                                                        }
-                                                      });
-                                                    },
-                                                    child: Stack(
-                                                      fit: StackFit.expand,
-                                                      children: [
-                                                        Align(
-                                                          alignment: Alignment
-                                                              .bottomCenter,
-                                                          child: Container(
-                                                            width:
-                                                                double.infinity,
-                                                            height: _barHeightForMinutes(
-                                                              selectedWeek
-                                                                  .entries[index]
-                                                                  .day
-                                                                  ?.trackedMinutes,
-                                                              scaleTop,
-                                                              plotHeight,
-                                                            ),
-                                                            decoration: BoxDecoration(
-                                                              color:
-                                                                  selectedWeek
-                                                                          .entries[index]
-                                                                          .day ==
-                                                                      null
-                                                                  ? appSurfaceStrong
-                                                                  : _activeBarIndex ==
-                                                                        index
-                                                                  ? brand.withValues(
-                                                                      alpha:
-                                                                          0.72,
-                                                                    )
-                                                                  : brand,
-                                                              borderRadius:
-                                                                  BorderRadius.circular(
-                                                                    4,
-                                                                  ),
-                                                            ),
-                                                          ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    ],
-                                  );
-                                },
-                              ),
-                            ),
-                          ],
+                        child: _LabeledValue(
+                          label: _mode == _BreakdownMode.weekly
+                              ? 'Week Total'
+                              : 'Day Total',
+                          value: _formatMinutes(summaryTotal),
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          const SizedBox(width: 27),
-                          Expanded(
-                            child: Row(
-                              children: [
-                                for (final entry in selectedWeek.entries)
-                                  Expanded(
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 1,
-                                      ),
-                                      child: Text(
-                                        _weekdayLabel(entry.date),
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(
-                                          color: appMutedText,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ],
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _LabeledValue(
+                          label: _mode == _BreakdownMode.weekly
+                              ? 'Daily Average'
+                              : 'Hourly Average',
+                          value: _formatMinutesWithSeconds(summaryAverage),
+                        ),
                       ),
                     ],
                   ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _LabeledValue(
-                  label: 'Week Total',
-                  value: _formatMinutes(weekTotal),
-                ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _LabeledValue(
-                  label: 'Daily Average',
-                  value: _formatMinutesWithSeconds(weekAverage),
+              if (_mode == _BreakdownMode.weekly && isLockedWeek)
+                Positioned(
+                  top: -10,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: _PremiumWeeklyOverlay(onUpgrade: widget.onOpenPremium),
                 ),
-              ),
+              if (_mode == _BreakdownMode.daily && isLockedDay)
+                Positioned(
+                  top: -10,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: _PremiumWeeklyOverlay(onUpgrade: widget.onOpenPremium),
+                ),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildWeeklyChart({
+    required _DailyWeekSlice? selectedWeek,
+    required List<int> guideValues,
+    required double plotHeight,
+    required int scaleTop,
+    required int barCount,
+  }) {
+    return selectedWeek == null
+        ? const Center(child: _EmptyLine(label: 'No data'))
+        : Column(
+            children: [
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(
+                      width: 22,
+                      child: _ChartGuides(guideValues: guideValues),
+                    ),
+                    const SizedBox(width: 5),
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          return Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              _ChartGrid(
+                                guideValues: guideValues,
+                                height: constraints.maxHeight,
+                              ),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  for (
+                                    var index = 0;
+                                    index < selectedWeek.entries.length;
+                                    index++
+                                  )
+                                    _BreakdownBar(
+                                      onTap: () {
+                                        setState(() {
+                                          _activeBarIndex =
+                                              _activeBarIndex == index
+                                              ? null
+                                              : index;
+                                        });
+                                      },
+                                      onLongPressStart: () {
+                                        setState(() {
+                                          _activeBarIndex = index;
+                                        });
+                                      },
+                                      onLongPressEnd: () {
+                                        setState(() {
+                                          if (_activeBarIndex == index) {
+                                            _activeBarIndex = null;
+                                          }
+                                        });
+                                      },
+                                      height: _barHeightForMinutes(
+                                        selectedWeek
+                                            .entries[index]
+                                            .day
+                                            ?.trackedMinutes,
+                                        scaleTop,
+                                        plotHeight,
+                                      ),
+                                      color:
+                                          selectedWeek.entries[index].day ==
+                                              null
+                                          ? appSurfaceStrong
+                                          : _activeBarIndex == index
+                                          ? brand.withValues(alpha: 0.72)
+                                          : brand,
+                                      radius: 4,
+                                    ),
+                                ],
+                              ),
+                              if (_activeBarIndex != null)
+                                Positioned(
+                                  left: _barTooltipLeft(
+                                    _activeBarIndex!,
+                                    barCount,
+                                    constraints.maxWidth,
+                                    _barTooltipLabel(
+                                      selectedWeek
+                                          .entries[_activeBarIndex!]
+                                          .day
+                                          ?.trackedMinutes,
+                                    ),
+                                  ),
+                                  bottom:
+                                      _barHeightForMinutes(
+                                        selectedWeek
+                                            .entries[_activeBarIndex!]
+                                            .day
+                                            ?.trackedMinutes,
+                                        scaleTop,
+                                        plotHeight,
+                                      ) +
+                                      8,
+                                  child: _BarTooltip(
+                                    label: _barTooltipLabel(
+                                      selectedWeek
+                                          .entries[_activeBarIndex!]
+                                          .day
+                                          ?.trackedMinutes,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const SizedBox(width: 27),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        for (final entry in selectedWeek.entries)
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 1,
+                              ),
+                              child: Text(
+                                _weekdayLabel(entry.date),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: appMutedText,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          );
+  }
+
+  Widget _buildDailyChart({
+    required StatisticsDailyPoint? selectedDay,
+    required List<int> guideValues,
+    required double plotHeight,
+    required int scaleTop,
+    required int barCount,
+  }) {
+    return selectedDay == null
+        ? const Center(child: _EmptyLine(label: 'No data'))
+        : Column(
+            children: [
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(
+                      width: 22,
+                      child: _ChartGuides(guideValues: guideValues),
+                    ),
+                    const SizedBox(width: 5),
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          return Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              _ChartGrid(
+                                guideValues: guideValues,
+                                height: constraints.maxHeight,
+                              ),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  for (
+                                    var index = 0;
+                                    index <
+                                        selectedDay.hourlyTrackedMinutes.length;
+                                    index++
+                                  )
+                                    _BreakdownBar(
+                                      onTap: () {
+                                        setState(() {
+                                          _activeBarIndex =
+                                              _activeBarIndex == index
+                                              ? null
+                                              : index;
+                                        });
+                                      },
+                                      onLongPressStart: () {
+                                        setState(() {
+                                          _activeBarIndex = index;
+                                        });
+                                      },
+                                      onLongPressEnd: () {
+                                        setState(() {
+                                          if (_activeBarIndex == index) {
+                                            _activeBarIndex = null;
+                                          }
+                                        });
+                                      },
+                                      height: _barHeightForMinutes(
+                                        selectedDay.hourlyTrackedMinutes[index],
+                                        scaleTop,
+                                        plotHeight,
+                                      ),
+                                      color: _activeBarIndex == index
+                                          ? brand.withValues(alpha: 0.72)
+                                          : brand,
+                                      radius: 2,
+                                    ),
+                                ],
+                              ),
+                              if (_activeBarIndex != null)
+                                Positioned(
+                                  left: _barTooltipLeft(
+                                    _activeBarIndex!,
+                                    barCount,
+                                    constraints.maxWidth,
+                                    _hourlyBarTooltipLabel(
+                                      _activeBarIndex!,
+                                      selectedDay
+                                          .hourlyTrackedMinutes[_activeBarIndex!],
+                                    ),
+                                  ),
+                                  bottom:
+                                      _barHeightForMinutes(
+                                        selectedDay
+                                            .hourlyTrackedMinutes[_activeBarIndex!],
+                                        scaleTop,
+                                        plotHeight,
+                                      ) +
+                                      8,
+                                  child: _BarTooltip(
+                                    label: _hourlyBarTooltipLabel(
+                                      _activeBarIndex!,
+                                      selectedDay
+                                          .hourlyTrackedMinutes[_activeBarIndex!],
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const SizedBox(width: 27),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return SizedBox(
+                          height: 14,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              for (final tick in _dailyAxisTicks)
+                                Positioned(
+                                  left:
+                                      ((constraints.maxWidth - 1) *
+                                          ((tick.hour + 0.5) / 24)) -
+                                      16,
+                                  width: 32,
+                                  child: Text(
+                                    tick.label,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: appMutedText,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          );
+  }
+}
+
+enum _BreakdownMode { weekly, daily }
+
+class _BreakdownModeMenu extends StatelessWidget {
+  const _BreakdownModeMenu({required this.mode, required this.onSelected});
+
+  final _BreakdownMode mode;
+  final ValueChanged<_BreakdownMode> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<_BreakdownMode>(
+      tooltip: 'Change breakdown',
+      onSelected: onSelected,
+      itemBuilder: (context) => const [
+        PopupMenuItem(value: _BreakdownMode.weekly, child: Text('Weekly')),
+        PopupMenuItem(value: _BreakdownMode.daily, child: Text('Daily')),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: appSurface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: appBorder),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              mode == _BreakdownMode.weekly ? 'Weekly' : 'Daily',
+              style: const TextStyle(
+                color: brand,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(width: 6),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: brand,
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChartGuides extends StatelessWidget {
+  const _ChartGuides({required this.guideValues});
+
+  final List<int> guideValues;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            for (var index = 0; index < guideValues.length; index++)
+              Positioned(
+                left: 0,
+                right: 0,
+                top: (constraints.maxHeight / (guideValues.length - 1)) * index,
+                child: Transform.translate(
+                  offset: const Offset(0, -10),
+                  child: Text(
+                    _formatGuideValue(guideValues[index]),
+                    textAlign: TextAlign.left,
+                    style: const TextStyle(
+                      color: appMutedText,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ChartGrid extends StatelessWidget {
+  const _ChartGrid({required this.guideValues, required this.height});
+
+  final List<int> guideValues;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        for (var index = 0; index < guideValues.length; index++)
+          Positioned(
+            left: 0,
+            right: 0,
+            top: (height / (guideValues.length - 1)) * index,
+            child: Container(height: 1, color: appBorder),
+          ),
+      ],
+    );
+  }
+}
+
+class _BreakdownBar extends StatelessWidget {
+  const _BreakdownBar({
+    required this.onTap,
+    required this.onLongPressStart,
+    required this.onLongPressEnd,
+    required this.height,
+    required this.color,
+    this.radius = 4,
+  });
+
+  final VoidCallback onTap;
+  final VoidCallback onLongPressStart;
+  final VoidCallback onLongPressEnd;
+  final double height;
+  final Color color;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 1),
+        child: SizedBox.expand(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTap,
+            onLongPressStart: (_) => onLongPressStart(),
+            onLongPressEnd: (_) => onLongPressEnd(),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Container(
+                    width: double.infinity,
+                    height: height,
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(radius),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1500,19 +1869,121 @@ class _DailyWeekEntry {
   final StatisticsDailyPoint? day;
 }
 
-class _AdvancedSection extends StatelessWidget {
+bool _isWeekOutsideFreeWindow(DateTime date) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final freeWindowStart = today.subtract(const Duration(days: 13));
+  final normalizedDate = DateTime(date.year, date.month, date.day);
+  return normalizedDate.isBefore(freeWindowStart);
+}
+
+class _PremiumWeeklyOverlay extends StatelessWidget {
+  const _PremiumWeeklyOverlay({required this.onUpgrade});
+
+  final VoidCallback onUpgrade;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(color: appSurface.withValues(alpha: 0.3)),
+          ),
+          Container(color: appSurface.withValues(alpha: 0.62)),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SvgPicture.asset(
+                        'assets/icons/diamond.svg',
+                        width: 28,
+                        height: 28,
+                        colorFilter: const ColorFilter.mode(
+                          appText,
+                          BlendMode.srcIn,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      const Text(
+                        'Unlock Longer Statistics',
+                        style: TextStyle(
+                          color: appText,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: onUpgrade,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(112, 36),
+                      backgroundColor: const Color(0xFFD4A63B),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Upgrade'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DailyAxisTick {
+  const _DailyAxisTick({required this.hour, required this.label});
+
+  final int hour;
+  final String label;
+}
+
+const List<_DailyAxisTick> _dailyAxisTicks = <_DailyAxisTick>[
+  _DailyAxisTick(hour: 0, label: '12am'),
+  _DailyAxisTick(hour: 6, label: '6am'),
+  _DailyAxisTick(hour: 12, label: '12pm'),
+  _DailyAxisTick(hour: 18, label: '6pm'),
+];
+
+class _AdvancedSection extends StatefulWidget {
   const _AdvancedSection({required this.statistics, required this.daily});
 
   final StatisticsSnapshot statistics;
   final List<StatisticsDailyPoint> daily;
 
   @override
+  State<_AdvancedSection> createState() => _AdvancedSectionState();
+}
+
+class _AdvancedSectionState extends State<_AdvancedSection>
+    with TickerProviderStateMixin {
+  bool _isExpanded = false;
+
+  @override
   Widget build(BuildContext context) {
-    final busiestTime = statistics.timeOfDay.isEmpty
+    final statistics = widget.statistics;
+    final daily = widget.daily;
+    final timeOfDayBuckets = _buildUsageTimeOfDayBuckets(daily);
+    final busiestTime = timeOfDayBuckets.isEmpty
         ? null
-        : statistics.timeOfDay.reduce(
+        : timeOfDayBuckets.reduce(
             (best, current) => current.blocks > best.blocks ? current : best,
           );
+    final maxTimeOfDayMinutes = timeOfDayBuckets.isEmpty
+        ? 0
+        : timeOfDayBuckets.map((bucket) => bucket.blocks).reduce(math.max);
     final protection = statistics.protection;
     final blockConversionRate =
         protection.totalBlocks + protection.totalBypasses <= 0
@@ -1567,121 +2038,211 @@ class _AdvancedSection extends StatelessWidget {
               })
               .reduce(math.max);
 
-    return _StatsCard(
+    return Material(
+      color: appSurface,
+      borderRadius: BorderRadius.circular(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Advanced',
-            style: TextStyle(
-              color: brand,
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isExpanded = !_isExpanded;
+              });
+            },
+            borderRadius: BorderRadius.circular(8),
+            splashColor: brand.withValues(alpha: 0.18),
+            highlightColor: appText.withValues(alpha: 0.04),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Advanced',
+                      style: TextStyle(
+                        color: brand,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: _isExpanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOut,
+                    child: const Icon(
+                      Icons.expand_more_rounded,
+                      color: appMutedText,
+                      size: 20,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 10),
-          const Divider(height: 1, color: appBorder),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(0, 10, 10, 10),
-                    child: _OverviewInlineMetric(
-                      label: 'Longest session',
-                      value: _formatMinutes(longestSessionMinutes),
-                    ),
-                  ),
-                ),
-                Container(width: 1, color: appBorder),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 10, 0, 10),
-                    child: _OverviewInlineMetric(
-                      label: 'Peak usage hour',
-                      value: busiestTime?.label ?? 'None',
-                    ),
-                  ),
-                ),
-              ],
+          ClipRect(
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              child: _isExpanded
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 10),
+                          const Divider(height: 1, color: appBorder),
+                          IntrinsicHeight(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      0,
+                                      10,
+                                      10,
+                                      10,
+                                    ),
+                                    child: _OverviewInlineMetric(
+                                      label: 'Longest session',
+                                      value: _formatMinutes(
+                                        longestSessionMinutes,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Container(width: 1, color: appBorder),
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      10,
+                                      10,
+                                      0,
+                                      10,
+                                    ),
+                                    child: _OverviewInlineMetric(
+                                      label: 'Peak usage hour',
+                                      value: busiestTime?.label ?? 'None',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Divider(height: 1, color: appBorder),
+                          IntrinsicHeight(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      0,
+                                      10,
+                                      10,
+                                      10,
+                                    ),
+                                    child: _OverviewInlineMetric(
+                                      label: 'Block conversion',
+                                      value:
+                                          '${_formatGroupedInt(blockConversionRate)}%',
+                                    ),
+                                  ),
+                                ),
+                                Container(width: 1, color: appBorder),
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      10,
+                                      10,
+                                      0,
+                                      10,
+                                    ),
+                                    child: _OverviewInlineMetric(
+                                      label: 'Top app share',
+                                      value:
+                                          '${_formatGroupedInt(topAppShare)}%',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Divider(height: 1, color: appBorder),
+                          IntrinsicHeight(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      0,
+                                      10,
+                                      10,
+                                      10,
+                                    ),
+                                    child: _OverviewInlineMetric(
+                                      label: 'Weekend Average',
+                                      value: _formatMinutes(
+                                        weekendAverage.round(),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Container(width: 1, color: appBorder),
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      10,
+                                      10,
+                                      0,
+                                      10,
+                                    ),
+                                    child: _OverviewInlineMetric(
+                                      label: 'Weekday Average',
+                                      value: _formatMinutes(
+                                        weekdayAverage.round(),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Time of day',
+                            style: TextStyle(
+                              color: appText,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          for (final bucket in timeOfDayBuckets) ...[
+                            _BucketRow(
+                              bucket: bucket,
+                              isHighlighted: bucket == busiestTime,
+                              maxValue: maxTimeOfDayMinutes,
+                            ),
+                            if (bucket != timeOfDayBuckets.last)
+                              const SizedBox(height: 8),
+                          ],
+                        ],
+                      ),
+                    )
+                  : const SizedBox.shrink(),
             ),
           ),
-          const Divider(height: 1, color: appBorder),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(0, 10, 10, 10),
-                    child: _OverviewInlineMetric(
-                      label: 'Block conversion',
-                      value: '${_formatGroupedInt(blockConversionRate)}%',
-                    ),
-                  ),
-                ),
-                Container(width: 1, color: appBorder),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 10, 0, 10),
-                    child: _OverviewInlineMetric(
-                      label: 'Top app share',
-                      value: '${_formatGroupedInt(topAppShare)}%',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1, color: appBorder),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(0, 10, 10, 10),
-                    child: _OverviewInlineMetric(
-                      label: 'Weekend Average',
-                      value: _formatMinutes(weekendAverage.round()),
-                    ),
-                  ),
-                ),
-                Container(width: 1, color: appBorder),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 10, 0, 10),
-                    child: _OverviewInlineMetric(
-                      label: 'Weekday Average',
-                      value: _formatMinutes(weekdayAverage.round()),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Time of day',
-            style: TextStyle(
-              color: appText,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 10),
-          for (final bucket in statistics.timeOfDay) ...[
-            _BucketRow(bucket: bucket, isHighlighted: bucket == busiestTime),
-            if (bucket != statistics.timeOfDay.last) const SizedBox(height: 8),
-          ],
         ],
       ),
     );
   }
 }
 
-class _AppsSection extends StatelessWidget {
+class _AppsSection extends StatefulWidget {
   const _AppsSection({
     required this.apps,
     required this.daily,
@@ -1693,20 +2254,32 @@ class _AppsSection extends StatelessWidget {
   final ValueChanged<StatisticsApp> onOpenApp;
 
   @override
+  State<_AppsSection> createState() => _AppsSectionState();
+}
+
+class _AppsSectionState extends State<_AppsSection> {
+  static const int _collapsedCount = 5;
+  bool _isExpanded = false;
+
+  @override
   Widget build(BuildContext context) {
-    final appsWithUsage = apps.where((app) {
-      return _minutesForAppInRange(daily, app.id) > 0;
+    final appsWithUsage = widget.apps.where((app) {
+      return _minutesForAppInRange(widget.daily, app.id) > 0;
     }).toList();
     final sortedApps = [...appsWithUsage]
       ..sort((a, b) {
-        final aMinutes = _minutesForAppInRange(daily, a.id);
-        final bMinutes = _minutesForAppInRange(daily, b.id);
+        final aMinutes = _minutesForAppInRange(widget.daily, a.id);
+        final bMinutes = _minutesForAppInRange(widget.daily, b.id);
         return bMinutes.compareTo(aMinutes);
       });
     final totalVisibleMinutes = sortedApps.fold<int>(
       0,
-      (sum, app) => sum + _minutesForAppInRange(daily, app.id),
+      (sum, app) => sum + _minutesForAppInRange(widget.daily, app.id),
     );
+    final canExpand = sortedApps.length > _collapsedCount;
+    final visibleApps = _isExpanded || !canExpand
+        ? sortedApps
+        : sortedApps.take(_collapsedCount).toList();
     return Material(
       color: appSurface,
       borderRadius: BorderRadius.circular(8),
@@ -1733,26 +2306,70 @@ class _AppsSection extends StatelessWidget {
           else
             Column(
               children: [
-                for (var index = 0; index < sortedApps.length; index++) ...[
+                for (var index = 0; index < visibleApps.length; index++) ...[
                   _AppListRow(
-                    app: sortedApps[index],
+                    app: visibleApps[index],
                     totalMinutes: _minutesForAppInRange(
-                      daily,
-                      sortedApps[index].id,
+                      widget.daily,
+                      visibleApps[index].id,
                     ),
                     totalSessions: _sessionCountForAppInRange(
-                      daily,
-                      sortedApps[index].id,
+                      widget.daily,
+                      visibleApps[index].id,
                     ),
                     shareOfTotal: totalVisibleMinutes <= 0
                         ? 0
-                        : _minutesForAppInRange(daily, sortedApps[index].id) /
+                        : _minutesForAppInRange(
+                                widget.daily,
+                                visibleApps[index].id,
+                              ) /
                               totalVisibleMinutes,
-                    onTap: () => onOpenApp(sortedApps[index]),
+                    onTap: () => widget.onOpenApp(visibleApps[index]),
                   ),
-                  if (index < sortedApps.length - 1)
+                  if (index < visibleApps.length - 1 || canExpand)
                     const Divider(height: 1, color: appBorder),
                 ],
+                if (canExpand)
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () {
+                        setState(() {
+                          _isExpanded = !_isExpanded;
+                        });
+                      },
+                      borderRadius: const BorderRadius.vertical(
+                        bottom: Radius.circular(8),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              _isExpanded ? 'Show Less' : 'Show More',
+                              style: const TextStyle(
+                                color: brand,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            AnimatedRotation(
+                              turns: _isExpanded ? 0.5 : 0,
+                              duration: const Duration(milliseconds: 180),
+                              curve: Curves.easeOut,
+                              child: const Icon(
+                                Icons.expand_more_rounded,
+                                color: brand,
+                                size: 18,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
         ],
@@ -1813,7 +2430,7 @@ class _AppListRow extends StatelessWidget {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            '${_formatGroupedInt(totalSessions)} Sessions',
+                            '${_formatGroupedInt(totalSessions)} Opens',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             textAlign: TextAlign.right,
@@ -1911,16 +2528,21 @@ class _AppIcon extends StatelessWidget {
 }
 
 class _BucketRow extends StatelessWidget {
-  const _BucketRow({required this.bucket, required this.isHighlighted});
+  const _BucketRow({
+    required this.bucket,
+    required this.isHighlighted,
+    required this.maxValue,
+  });
 
   final StatisticsTimeOfDayBucket bucket;
   final bool isHighlighted;
+  final int maxValue;
 
   @override
   Widget build(BuildContext context) {
-    final total = math.max(1, bucket.blocks + bucket.bypasses);
-    final blockFlex = bucket.blocks;
-    final remainderFlex = math.max(0, total - bucket.blocks);
+    final total = math.max(1, maxValue);
+    final filledFlex = math.max(0, bucket.blocks);
+    final remainderFlex = math.max(0, total - filledFlex);
     return Row(
       children: [
         SizedBox(
@@ -1939,9 +2561,9 @@ class _BucketRow extends StatelessWidget {
             borderRadius: BorderRadius.circular(999),
             child: Row(
               children: [
-                if (blockFlex > 0)
+                if (filledFlex > 0)
                   Expanded(
-                    flex: blockFlex,
+                    flex: filledFlex,
                     child: Container(height: 8, color: brand),
                   ),
                 if (remainderFlex > 0)
@@ -1955,7 +2577,7 @@ class _BucketRow extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         Text(
-          '${bucket.blocks}',
+          _formatMinutes(bucket.blocks),
           style: const TextStyle(
             color: appText,
             fontSize: 13,
@@ -1980,6 +2602,44 @@ class _StatsCard extends StatelessWidget {
       child: Padding(padding: const EdgeInsets.all(12), child: child),
     );
   }
+}
+
+List<StatisticsTimeOfDayBucket> _buildUsageTimeOfDayBuckets(
+  List<StatisticsDailyPoint> daily,
+) {
+  final totals = <String, int>{
+    'Morning': 0,
+    'Afternoon': 0,
+    'Evening': 0,
+    'Late Night': 0,
+  };
+
+  for (final day in daily) {
+    for (
+      var hour = 0;
+      hour < math.min(24, day.hourlyTrackedMinutes.length);
+      hour++
+    ) {
+      final label = _timeOfDayLabelForHour(hour);
+      totals[label] = (totals[label] ?? 0) + day.hourlyTrackedMinutes[hour];
+    }
+  }
+
+  return [
+    for (final label in ['Morning', 'Afternoon', 'Evening', 'Late Night'])
+      StatisticsTimeOfDayBucket(
+        label: label,
+        blocks: totals[label] ?? 0,
+        bypasses: 0,
+      ),
+  ];
+}
+
+String _timeOfDayLabelForHour(int hour) {
+  if (hour >= 5 && hour < 12) return 'Morning';
+  if (hour >= 12 && hour < 17) return 'Afternoon';
+  if (hour >= 17 && hour < 22) return 'Evening';
+  return 'Late Night';
 }
 
 class _LabeledValue extends StatelessWidget {
@@ -2102,6 +2762,7 @@ StatisticsSnapshot _buildDummyStatisticsSnapshot(
     return StatisticsDailyPoint(
       dateKey: _dateKey(date),
       trackedMinutes: total,
+      hourlyTrackedMinutes: _buildDummyHourlyTrackedMinutes(total, dayIndex),
       blocks: 4 + (dayIndex % 9),
       bypasses: 1 + (dayIndex % 4),
       reelsBlocks: dayIndex % 3,
@@ -2116,6 +2777,13 @@ StatisticsSnapshot _buildDummyStatisticsSnapshot(
       sessionCount: 9 + (dayIndex % 6),
       longestSessionMinutes: 18 + (dayIndex % 14),
       appMinutes: appMinutes,
+      appHourlyTrackedMinutes: {
+        for (final app in apps)
+          app.id: _buildDummyHourlyTrackedMinutes(
+            app.dailyMinutes30d[dayIndex],
+            dayIndex + app.id.length,
+          ),
+      },
       appSessionCounts: {
         for (final app in apps)
           app.id: math.max(1, ((app.dailyMinutes30d[dayIndex]) / 22).round()),
@@ -2318,7 +2986,11 @@ List<CustomTrackedApp> _groupInstalledAppsForStatistics(
 }
 
 String _statisticsAppId(CustomTrackedApp app) {
-  final packageLower = app.packageName.toLowerCase();
+  return _statisticsAppIdForPackageName(app.packageName);
+}
+
+String _statisticsAppIdForPackageName(String packageName) {
+  final packageLower = packageName.toLowerCase();
   if (packageLower == 'com.google.android.youtube' ||
       packageLower.startsWith('app.revanced.android.youtube')) {
     return 'youtube';
@@ -2326,7 +2998,7 @@ String _statisticsAppId(CustomTrackedApp app) {
   if (packageLower == 'com.instagram.android') {
     return 'instagram';
   }
-  return app.packageName;
+  return packageName;
 }
 
 String _dateKey(DateTime date) {
@@ -2376,6 +3048,49 @@ String _weekdayLabel(DateTime date) {
   return labels[date.weekday - 1];
 }
 
+String _dayRangeLabel(DateTime date) {
+  return _fullDateLabel(date);
+}
+
+bool _isToday(DateTime date) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final normalized = DateTime(date.year, date.month, date.day);
+  return normalized == today;
+}
+
+String _hourLabel(int hour) {
+  final suffix = hour >= 12 ? 'PM' : 'AM';
+  final normalizedHour = hour % 12 == 0 ? 12 : hour % 12;
+  return '$normalizedHour $suffix';
+}
+
+String _hourlyBarTooltipLabel(int hour, int minutes) {
+  return '${_hourLabel(hour)}  ${_barTooltipLabel(minutes)}';
+}
+
+List<int> _buildDummyHourlyTrackedMinutes(int totalMinutes, int seed) {
+  final buckets = List<int>.filled(24, 0);
+  if (totalMinutes <= 0) return buckets;
+
+  final activeHours = <int>[7, 8, 12, 13, 18, 19, 20, 21];
+  var remaining = totalMinutes;
+  for (var i = 0; i < activeHours.length; i++) {
+    final hoursLeft = activeHours.length - i;
+    final index = activeHours[(i + seed) % activeHours.length];
+    final allocation = i == activeHours.length - 1
+        ? remaining
+        : math.max(0, (remaining / hoursLeft).round() + ((seed + i) % 7) - 3);
+    final applied = math.min(remaining, allocation);
+    buckets[index] += applied;
+    remaining -= applied;
+  }
+  if (remaining > 0) {
+    buckets[20] += remaining;
+  }
+  return buckets;
+}
+
 String _shortDate(DateTime date) {
   const months = [
     'Jan',
@@ -2392,6 +3107,33 @@ String _shortDate(DateTime date) {
     'Dec',
   ];
   return '${months[date.month - 1]} ${date.day}';
+}
+
+String _fullDateLabel(DateTime date) {
+  const weekdays = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  return '${weekdays[date.weekday - 1]}, ${months[date.month - 1]} ${date.day}';
 }
 
 List<_DailyWeekSlice> _buildDailyWeekSlices(List<StatisticsDailyPoint> daily) {
@@ -2429,6 +3171,7 @@ List<StatisticsDailyPoint> _filterDailyByAppIds(
           (day) => StatisticsDailyPoint(
             dateKey: day.dateKey,
             trackedMinutes: 0,
+            hourlyTrackedMinutes: List<int>.filled(24, 0),
             blocks: day.blocks,
             bypasses: day.bypasses,
             reelsBlocks: day.reelsBlocks,
@@ -2443,6 +3186,7 @@ List<StatisticsDailyPoint> _filterDailyByAppIds(
             sessionCount: 0,
             longestSessionMinutes: 0,
             appMinutes: const <String, int>{},
+            appHourlyTrackedMinutes: const <String, List<int>>{},
             appSessionCounts: const <String, int>{},
             appLongestSessionMinutes: const <String, int>{},
             appReelsBlocks: const <String, int>{},
@@ -2465,6 +3209,10 @@ List<StatisticsDailyPoint> _filterDailyByAppIds(
     };
     final filteredAppSessionCounts = <String, int>{
       for (final entry in day.appSessionCounts.entries)
+        if (appIds.contains(entry.key)) entry.key: entry.value,
+    };
+    final filteredAppHourlyTrackedMinutes = <String, List<int>>{
+      for (final entry in day.appHourlyTrackedMinutes.entries)
         if (appIds.contains(entry.key)) entry.key: entry.value,
     };
     final filteredAppLongestSessionMinutes = <String, int>{
@@ -2501,6 +3249,13 @@ List<StatisticsDailyPoint> _filterDailyByAppIds(
         0,
         (sum, value) => sum + value,
       ),
+      hourlyTrackedMinutes: List<int>.generate(24, (hour) {
+        return filteredAppHourlyTrackedMinutes.values.fold<int>(
+          0,
+          (sum, hourlyMinutes) =>
+              sum + (hour < hourlyMinutes.length ? hourlyMinutes[hour] : 0),
+        );
+      }),
       blocks: day.blocks,
       bypasses: day.bypasses,
       reelsBlocks: day.reelsBlocks,
@@ -2520,6 +3275,7 @@ List<StatisticsDailyPoint> _filterDailyByAppIds(
           ? 0
           : filteredAppLongestSessionMinutes.values.reduce(math.max),
       appMinutes: filteredAppMinutes,
+      appHourlyTrackedMinutes: filteredAppHourlyTrackedMinutes,
       appSessionCounts: filteredAppSessionCounts,
       appLongestSessionMinutes: filteredAppLongestSessionMinutes,
       appReelsBlocks: filteredAppReelsBlocks,
@@ -2580,6 +3336,11 @@ DateTimeRange? _statisticsRangeBounds(
     case _AppDateRangePreset.last7Days:
       return DateTimeRange(
         start: today.subtract(const Duration(days: 6)),
+        end: today,
+      );
+    case _AppDateRangePreset.last14Days:
+      return DateTimeRange(
+        start: today.subtract(const Duration(days: 13)),
         end: today,
       );
     case _AppDateRangePreset.lastMonth:
@@ -2654,6 +3415,14 @@ double _readDouble(dynamic value) {
   if (value is double) return value;
   if (value is int) return value.toDouble();
   return double.tryParse('$value') ?? 0;
+}
+
+List<int> _readFixedIntList(dynamic value, {required int expectedLength}) {
+  final source = value is List ? value : const <dynamic>[];
+  return List<int>.generate(expectedLength, (index) {
+    if (index >= source.length) return 0;
+    return _readInt(source[index]);
+  });
 }
 
 extension _TakeLastExtension<T> on List<T> {

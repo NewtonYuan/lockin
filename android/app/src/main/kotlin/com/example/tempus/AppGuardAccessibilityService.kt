@@ -347,7 +347,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
         appLabel: String,
     ) {
         enforcementHandler.post {
-            dismissPromptState()
             promptTarget = target
             promptPackageName = sourcePackageName
             val intent = Intent(this, ConfirmBlockerActivity::class.java).apply {
@@ -432,7 +431,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
         appLabel: String,
     ) {
         enforcementHandler.post {
-            dismissPromptState()
             promptTarget = TARGET_PAUSE_ON_OPEN
             promptPackageName = sourcePackageName
             val intent = Intent(this, PauseOnOpenActivity::class.java).apply {
@@ -457,7 +455,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
         domain: String,
     ) {
         enforcementHandler.post {
-            dismissPromptState()
             promptTarget = TARGET_WEBSITE
             promptPackageName = sourcePackageName
             val intent = Intent(this, WebsiteBlockActivity::class.java).apply {
@@ -482,7 +479,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
         appLabel: String,
     ) {
         enforcementHandler.post {
-            dismissPromptState()
             promptTarget = TARGET_DAILY_LIMIT
             promptPackageName = sourcePackageName
             val intent = Intent(this, DailyLimitReachedActivity::class.java).apply {

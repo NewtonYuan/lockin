@@ -4,6 +4,7 @@ enum _AppDateRangePreset {
   today('Today'),
   yesterday('Yesterday'),
   last7Days('Last 7 Days'),
+  last14Days('Last 14 Days'),
   lastMonth('Last 28 Days'),
   last365Days('Last 365 Days'),
   custom('Custom');
@@ -33,7 +34,9 @@ class _AppDetailScreen extends StatefulWidget {
 }
 
 class _AppDetailScreenState extends State<_AppDetailScreen> {
+  _BreakdownMode _breakdownMode = _BreakdownMode.weekly;
   int _selectedWeekOffset = 0;
+  int _selectedDayOffset = 0;
   int? _activeBarIndex;
   _AppDateRangePreset _selectedRangePreset = _AppDateRangePreset.last7Days;
   DateTimeRange? _customDateRange;
@@ -60,35 +63,80 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
         .map((day) => day.appSessionCounts[app.id] ?? 0)
         .toList();
     final weekSlices = _buildAppWeekSlices(statistics.daily, app.id);
+    final effectiveWeekOffset = weekSlices.isEmpty
+        ? 0
+        : math.min(_selectedWeekOffset, weekSlices.length - 1);
     final selectedWeekIndex = weekSlices.isEmpty
         ? -1
-        : math.max(0, weekSlices.length - 1 - _selectedWeekOffset);
+        : math.max(0, weekSlices.length - 1 - effectiveWeekOffset);
     final selectedWeek = selectedWeekIndex >= 0
         ? weekSlices[selectedWeekIndex]
         : null;
-    final selectedWeekMaxBar = selectedWeek == null
+    final last7Days = appScopedDaily.takeLast(7);
+    final effectiveDayOffset = last7Days.isEmpty
         ? 0
-        : selectedWeek.entries.fold<int>(
-            0,
-            (current, entry) => math.max(current, entry.minutes ?? 0),
-          );
-    final selectedWeekTotal = selectedWeek == null
-        ? 0
-        : selectedWeek.entries.fold<int>(
-            0,
-            (sum, entry) => sum + (entry.minutes ?? 0),
-          );
-    final selectedWeekAverage =
-        selectedWeek == null ||
-            selectedWeek.entries.where((entry) => entry.minutes != null).isEmpty
+        : math.min(_selectedDayOffset, last7Days.length - 1);
+    final selectedDayIndex = last7Days.isEmpty
+        ? -1
+        : math.max(0, last7Days.length - 1 - effectiveDayOffset);
+    final selectedDay = selectedDayIndex >= 0
+        ? last7Days[selectedDayIndex]
+        : null;
+    final isLockedWeek =
+        !widget.isPremium &&
+        selectedWeek != null &&
+        _isWeekOutsideFreeWindow(selectedWeek.entries.last.date);
+    final isLockedDay =
+        !widget.isPremium && selectedDay != null && !_isToday(selectedDay.date);
+    final selectedDayHourlyMinutes = selectedDay == null
+        ? const <int>[]
+        : (selectedDay.appHourlyTrackedMinutes[app.id] ??
+              List<int>.filled(24, 0));
+    final breakdownMaxBar = _breakdownMode == _BreakdownMode.weekly
+        ? selectedWeek == null
+              ? 0
+              : selectedWeek.entries.fold<int>(
+                  0,
+                  (current, entry) => math.max(current, entry.minutes ?? 0),
+                )
+        : selectedDayHourlyMinutes.fold<int>(0, math.max);
+    final breakdownTotal = _breakdownMode == _BreakdownMode.weekly
+        ? selectedWeek == null
+              ? 0
+              : selectedWeek.entries.fold<int>(
+                  0,
+                  (sum, entry) => sum + (entry.minutes ?? 0),
+                )
+        : selectedDay?.appMinutes[app.id] ?? 0;
+    final breakdownAverage = _breakdownMode == _BreakdownMode.weekly
+        ? selectedWeek == null ||
+                  selectedWeek.entries
+                      .where((entry) => entry.minutes != null)
+                      .isEmpty
+              ? 0.0
+              : breakdownTotal /
+                    selectedWeek.entries
+                        .where((entry) => entry.minutes != null)
+                        .length
+        : selectedDay == null
         ? 0.0
-        : selectedWeekTotal /
-              selectedWeek.entries
-                  .where((entry) => entry.minutes != null)
-                  .length;
-    final selectedWeekGuideValues = _buildChartGuideValues(selectedWeekMaxBar);
-    const selectedWeekPlotHeight = 148.0;
-    final selectedWeekScaleTop = selectedWeekGuideValues.first;
+        : breakdownTotal / 24;
+    final breakdownGuideValues = _buildChartGuideValues(breakdownMaxBar);
+    const breakdownPlotHeight = 148.0;
+    final breakdownScaleTop = breakdownGuideValues.first;
+    final breakdownBarCount = _breakdownMode == _BreakdownMode.weekly
+        ? (selectedWeek?.entries.length ?? 0)
+        : selectedDayHourlyMinutes.length;
+    final breakdownLabel = _breakdownMode == _BreakdownMode.weekly
+        ? selectedWeek == null
+              ? 'No data'
+              : _weekRangeLabel(
+                  selectedWeek.entries.first.date,
+                  selectedWeek.entries.last.date,
+                )
+        : selectedDay == null
+        ? 'No data'
+        : _dayRangeLabel(selectedDay.date);
     final totalTrackedInRange = appDaily.fold<int>(
       0,
       (sum, value) => sum + value,
@@ -119,7 +167,10 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
         : previousTotalSessionsInRange / previousDaily.length;
     final protectionKind = _protectionKind(app);
     final protectionBlockedCount = _protectionBlockedCount(filteredDaily, app);
-    final protectionBypassedCount = _protectionBypassedCount(filteredDaily, app);
+    final protectionBypassedCount = _protectionBypassedCount(
+      filteredDaily,
+      app,
+    );
     final protectionSavedMinutes = _protectionSavedMinutes(filteredDaily, app);
     final protectionBypassedMinutes = _protectionBypassedMinutes(
       filteredDaily,
@@ -153,7 +204,8 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                 alignment: Alignment.centerLeft,
                 child: PopupMenuButton<_AppDateRangePreset>(
                   onSelected: (preset) async {
-                    if (preset == _AppDateRangePreset.last365Days &&
+                    if ((preset == _AppDateRangePreset.lastMonth ||
+                            preset == _AppDateRangePreset.last365Days) &&
                         !widget.isPremium) {
                       widget.onOpenPremium();
                       return;
@@ -183,6 +235,7 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                         _selectedRangePreset = preset;
                         _customDateRange = range;
                         _selectedWeekOffset = 0;
+                        _selectedDayOffset = 0;
                         _activeBarIndex = null;
                       });
                       return;
@@ -191,6 +244,7 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                       _selectedRangePreset = preset;
                       _customDateRange = null;
                       _selectedWeekOffset = 0;
+                      _selectedDayOffset = 0;
                       _activeBarIndex = null;
                     });
                   },
@@ -199,12 +253,15 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                       _AppDateRangePreset.today,
                       _AppDateRangePreset.yesterday,
                       _AppDateRangePreset.last7Days,
+                      _AppDateRangePreset.last14Days,
                       _AppDateRangePreset.lastMonth,
                       _AppDateRangePreset.last365Days,
                     ])
                       PopupMenuItem<_AppDateRangePreset>(
                         value: preset,
-                        child: preset == _AppDateRangePreset.last365Days
+                        child:
+                            preset == _AppDateRangePreset.lastMonth ||
+                                preset == _AppDateRangePreset.last365Days
                             ? Row(
                                 children: [
                                   SvgPicture.asset(
@@ -255,7 +312,9 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         if (_selectedRangePreset ==
-                            _AppDateRangePreset.last365Days)
+                                _AppDateRangePreset.lastMonth ||
+                            _selectedRangePreset ==
+                                _AppDateRangePreset.last365Days)
                           SvgPicture.asset(
                             'assets/icons/diamond.svg',
                             width: 18,
@@ -331,8 +390,8 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                                 value: _formatMinutes(totalTrackedInRange),
                                 delta: _buildMetricDelta(
                                   currentValue: totalTrackedInRange.toDouble(),
-                                  previousValue:
-                                      previousTotalTrackedInRange.toDouble(),
+                                  previousValue: previousTotalTrackedInRange
+                                      .toDouble(),
                                 ),
                               ),
                             ),
@@ -348,8 +407,7 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                                 ),
                                 delta: _buildMetricDelta(
                                   currentValue: averageTrackedInRange,
-                                  previousValue:
-                                      previousAverageTrackedInRange,
+                                  previousValue: previousAverageTrackedInRange,
                                 ),
                               ),
                             ),
@@ -366,13 +424,12 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                             child: Padding(
                               padding: const EdgeInsets.fromLTRB(0, 10, 10, 0),
                               child: _OverviewInlineMetric(
-                                label: 'Total Sessions',
+                                label: 'Total Opens',
                                 value: _formatGroupedInt(totalSessionsInRange),
                                 delta: _buildMetricDelta(
-                                  currentValue:
-                                      totalSessionsInRange.toDouble(),
-                                  previousValue:
-                                      previousTotalSessionsInRange.toDouble(),
+                                  currentValue: totalSessionsInRange.toDouble(),
+                                  previousValue: previousTotalSessionsInRange
+                                      .toDouble(),
                                 ),
                               ),
                             ),
@@ -382,15 +439,14 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                             child: Padding(
                               padding: const EdgeInsets.fromLTRB(10, 10, 0, 0),
                               child: _OverviewInlineMetric(
-                                label: 'Daily Sessions',
+                                label: 'Daily Opens',
                                 value: _formatDecimalMetric(
                                   averageSessionsInRange,
                                   decimalPlaces: 2,
                                 ),
                                 delta: _buildMetricDelta(
                                   currentValue: averageSessionsInRange,
-                                  previousValue:
-                                      previousAverageSessionsInRange,
+                                  previousValue: previousAverageSessionsInRange,
                                 ),
                               ),
                             ),
@@ -431,7 +487,7 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                                 ),
                                 child: _OverviewInlineMetric(
                                   label: '$protectionKind Blocked',
-                                  value: _formatGroupedInt(
+                                  value: _formatTimesCount(
                                     protectionBlockedCount,
                                   ),
                                 ),
@@ -448,7 +504,7 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                                 ),
                                 child: _OverviewInlineMetric(
                                   label: '$protectionKind Bypassed',
-                                  value: _formatGroupedInt(
+                                  value: _formatTimesCount(
                                     protectionBypassedCount,
                                   ),
                                 ),
@@ -505,25 +561,35 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Weekly breakdown',
-                      style: TextStyle(
-                        color: brand,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Breakdown',
+                            style: TextStyle(
+                              color: brand,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        _BreakdownModeMenu(
+                          mode: _breakdownMode,
+                          onSelected: (mode) {
+                            setState(() {
+                              _breakdownMode = mode;
+                              _activeBarIndex = null;
+                            });
+                          },
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 12),
                     Row(
                       children: [
                         Expanded(
                           child: Text(
-                            selectedWeek == null
-                                ? 'No activity yet'
-                                : _weekRangeLabel(
-                                    selectedWeek.entries.first.date,
-                                    selectedWeek.entries.last.date,
-                                  ),
+                            breakdownLabel,
                             style: const TextStyle(
                               color: appText,
                               fontSize: 14,
@@ -533,10 +599,19 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                         ),
                         _WeekNavButton(
                           icon: Icons.chevron_left_rounded,
-                          onTap: _selectedWeekOffset < weekSlices.length - 1
+                          onTap: _breakdownMode == _BreakdownMode.weekly
+                              ? effectiveWeekOffset < weekSlices.length - 1
+                                    ? () {
+                                        setState(() {
+                                          _selectedWeekOffset++;
+                                          _activeBarIndex = null;
+                                        });
+                                      }
+                                    : null
+                              : effectiveDayOffset < last7Days.length - 1
                               ? () {
                                   setState(() {
-                                    _selectedWeekOffset++;
+                                    _selectedDayOffset++;
                                     _activeBarIndex = null;
                                   });
                                 }
@@ -545,10 +620,19 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                         const SizedBox(width: 6),
                         _WeekNavButton(
                           icon: Icons.chevron_right_rounded,
-                          onTap: _selectedWeekOffset > 0
+                          onTap: _breakdownMode == _BreakdownMode.weekly
+                              ? effectiveWeekOffset > 0
+                                    ? () {
+                                        setState(() {
+                                          _selectedWeekOffset--;
+                                          _activeBarIndex = null;
+                                        });
+                                      }
+                                    : null
+                              : effectiveDayOffset > 0
                               ? () {
                                   setState(() {
-                                    _selectedWeekOffset--;
+                                    _selectedDayOffset--;
                                     _activeBarIndex = null;
                                   });
                                 }
@@ -557,287 +641,415 @@ class _AppDetailScreenState extends State<_AppDetailScreen> {
                       ],
                     ),
                     const SizedBox(height: 14),
-                    SizedBox(
-                      height: 196,
-                      child: selectedWeek == null
-                          ? const Center(
-                              child: _EmptyLine(
-                                label: 'No data available for this app.',
-                              ),
-                            )
-                          : Column(
-                              children: [
-                                Expanded(
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      SizedBox(
-                                        width: 22,
-                                        child: LayoutBuilder(
-                                          builder: (context, constraints) {
-                                            final lineCount =
-                                                selectedWeekGuideValues.length;
-                                            return Stack(
-                                              clipBehavior: Clip.none,
-                                              children: [
-                                                for (
-                                                  var index = 0;
-                                                  index < lineCount;
-                                                  index++
-                                                )
-                                                  Positioned(
-                                                    right: 0,
-                                                    top: lineCount <= 1
-                                                        ? 0
-                                                        : ((constraints.maxHeight -
-                                                                      1) *
-                                                                  index /
-                                                                  (lineCount -
-                                                                      1)) -
-                                                              6,
-                                                    child: SizedBox(
-                                                      height: 12,
-                                                      width: 22,
-                                                      child: FittedBox(
-                                                        fit: BoxFit.scaleDown,
-                                                        alignment: Alignment
-                                                            .centerRight,
-                                                        child: Text(
-                                                          _formatGuideValue(
-                                                            selectedWeekGuideValues[index],
-                                                          ),
-                                                          style: const TextStyle(
-                                                            color: appMutedText,
-                                                            fontSize: 10,
-                                                            fontWeight:
-                                                                FontWeight.w600,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                              ],
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                      const SizedBox(width: 5),
-                                      Expanded(
-                                        child: LayoutBuilder(
-                                          builder: (context, constraints) {
-                                            final barCount =
-                                                selectedWeek.entries.length;
-                                            return Stack(
-                                              clipBehavior: Clip.none,
-                                              children: [
-                                                if (_activeBarIndex != null)
-                                                  Positioned(
-                                                    left: _barTooltipLeft(
-                                                      _activeBarIndex!,
-                                                      barCount,
-                                                      constraints.maxWidth,
-                                                      _barTooltipLabel(
-                                                        selectedWeek
-                                                            .entries[_activeBarIndex!]
-                                                            .minutes,
-                                                      ),
-                                                    ),
-                                                    bottom:
-                                                        _barHeightForMinutes(
-                                                          selectedWeek
-                                                              .entries[_activeBarIndex!]
-                                                              .minutes,
-                                                          selectedWeekScaleTop,
-                                                          selectedWeekPlotHeight,
-                                                        ) +
-                                                        8,
-                                                    child: _BarTooltip(
-                                                      label: _barTooltipLabel(
-                                                        selectedWeek
-                                                            .entries[_activeBarIndex!]
-                                                            .minutes,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                Row(
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              height: 196,
+                              child: _breakdownMode == _BreakdownMode.weekly
+                                  ? selectedWeek == null
+                                        ? const Center(
+                                            child: _EmptyLine(
+                                              label:
+                                                  'No data available for this app.',
+                                            ),
+                                          )
+                                        : Column(
+                                            children: [
+                                              Expanded(
+                                                child: Row(
                                                   crossAxisAlignment:
-                                                      CrossAxisAlignment.end,
+                                                      CrossAxisAlignment
+                                                          .stretch,
                                                   children: [
-                                                    for (
-                                                      var index = 0;
-                                                      index <
-                                                          selectedWeek
-                                                              .entries
-                                                              .length;
-                                                      index++
-                                                    )
-                                                      Expanded(
-                                                        child: Padding(
-                                                          padding:
-                                                              const EdgeInsets.symmetric(
-                                                                horizontal: 1,
-                                                              ),
-                                                          child: Stack(
+                                                    SizedBox(
+                                                      width: 22,
+                                                      child: _ChartGuides(
+                                                        guideValues:
+                                                            breakdownGuideValues,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 5),
+                                                    Expanded(
+                                                      child: LayoutBuilder(
+                                                        builder: (context, constraints) {
+                                                          return Stack(
+                                                            clipBehavior:
+                                                                Clip.none,
                                                             children: [
-                                                              Column(
-                                                                mainAxisAlignment:
-                                                                    MainAxisAlignment
-                                                                        .spaceBetween,
+                                                              _ChartGrid(
+                                                                guideValues:
+                                                                    breakdownGuideValues,
+                                                                height: constraints
+                                                                    .maxHeight,
+                                                              ),
+                                                              Row(
+                                                                crossAxisAlignment:
+                                                                    CrossAxisAlignment
+                                                                        .end,
                                                                 children: [
                                                                   for (
-                                                                    var lineIndex =
+                                                                    var index =
                                                                         0;
-                                                                    lineIndex <
-                                                                        selectedWeekGuideValues
+                                                                    index <
+                                                                        selectedWeek
+                                                                            .entries
                                                                             .length;
-                                                                    lineIndex++
+                                                                    index++
                                                                   )
-                                                                    Container(
-                                                                      height: 1,
+                                                                    _BreakdownBar(
+                                                                      onTap: () {
+                                                                        setState(() {
+                                                                          _activeBarIndex =
+                                                                              _activeBarIndex ==
+                                                                                  index
+                                                                              ? null
+                                                                              : index;
+                                                                        });
+                                                                      },
+                                                                      onLongPressStart: () {
+                                                                        setState(() {
+                                                                          _activeBarIndex =
+                                                                              index;
+                                                                        });
+                                                                      },
+                                                                      onLongPressEnd: () {
+                                                                        setState(() {
+                                                                          if (_activeBarIndex ==
+                                                                              index) {
+                                                                            _activeBarIndex =
+                                                                                null;
+                                                                          }
+                                                                        });
+                                                                      },
+                                                                      height: _barHeightForMinutes(
+                                                                        selectedWeek
+                                                                            .entries[index]
+                                                                            .minutes,
+                                                                        breakdownScaleTop,
+                                                                        breakdownPlotHeight,
+                                                                      ),
                                                                       color:
-                                                                          appBorder,
+                                                                          selectedWeek.entries[index].minutes ==
+                                                                              null
+                                                                          ? appSurfaceStrong
+                                                                          : _activeBarIndex ==
+                                                                                index
+                                                                          ? brand.withValues(
+                                                                              alpha: 0.72,
+                                                                            )
+                                                                          : brand,
+                                                                      radius: 4,
                                                                     ),
                                                                 ],
                                                               ),
-                                                              Positioned.fill(
-                                                                child: GestureDetector(
-                                                                  behavior:
-                                                                      HitTestBehavior
-                                                                          .opaque,
-                                                                  onTap: () {
-                                                                    setState(() {
-                                                                      _activeBarIndex =
-                                                                          _activeBarIndex ==
-                                                                              index
-                                                                          ? null
-                                                                          : index;
-                                                                    });
-                                                                  },
-                                                                  onLongPressStart: (_) {
-                                                                    setState(() {
-                                                                      _activeBarIndex =
-                                                                          index;
-                                                                    });
-                                                                  },
-                                                                  onLongPressEnd: (_) {
-                                                                    setState(() {
-                                                                      if (_activeBarIndex ==
-                                                                          index) {
-                                                                        _activeBarIndex =
-                                                                            null;
-                                                                      }
-                                                                    });
-                                                                  },
-                                                                  child: Stack(
-                                                                    fit: StackFit
-                                                                        .expand,
-                                                                    children: [
-                                                                      Align(
-                                                                        alignment:
-                                                                            Alignment.bottomCenter,
-                                                                        child: Container(
-                                                                          width:
-                                                                              double.infinity,
-                                                                          height: _barHeightForMinutes(
-                                                                            selectedWeek.entries[index].minutes,
-                                                                            selectedWeekScaleTop,
-                                                                            selectedWeekPlotHeight,
-                                                                          ),
-                                                                          decoration: BoxDecoration(
-                                                                            color:
-                                                                                selectedWeek.entries[index].minutes ==
-                                                                                    null
-                                                                                ? appSurfaceStrong
-                                                                                : _activeBarIndex ==
-                                                                                      index
-                                                                                ? brand.withValues(
-                                                                                    alpha: 0.72,
-                                                                                  )
-                                                                                : brand,
-                                                                            borderRadius: BorderRadius.circular(
-                                                                              4,
-                                                                            ),
-                                                                          ),
-                                                                        ),
-                                                                      ),
-                                                                    ],
+                                                              if (_activeBarIndex !=
+                                                                  null)
+                                                                Positioned(
+                                                                  left: _barTooltipLeft(
+                                                                    _activeBarIndex!,
+                                                                    breakdownBarCount,
+                                                                    constraints
+                                                                        .maxWidth,
+                                                                    _barTooltipLabel(
+                                                                      selectedWeek
+                                                                          .entries[_activeBarIndex!]
+                                                                          .minutes,
+                                                                    ),
+                                                                  ),
+                                                                  bottom:
+                                                                      _barHeightForMinutes(
+                                                                        selectedWeek
+                                                                            .entries[_activeBarIndex!]
+                                                                            .minutes,
+                                                                        breakdownScaleTop,
+                                                                        breakdownPlotHeight,
+                                                                      ) +
+                                                                      8,
+                                                                  child: _BarTooltip(
+                                                                    label: _barTooltipLabel(
+                                                                      selectedWeek
+                                                                          .entries[_activeBarIndex!]
+                                                                          .minutes,
+                                                                    ),
                                                                   ),
                                                                 ),
-                                                              ),
                                                             ],
-                                                          ),
-                                                        ),
+                                                          );
+                                                        },
                                                       ),
+                                                    ),
                                                   ],
                                                 ),
-                                              ],
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  children: [
-                                    const SizedBox(width: 27),
-                                    Expanded(
-                                      child: Row(
-                                        children: [
-                                          for (
-                                            var index = 0;
-                                            index < selectedWeek.entries.length;
-                                            index++
-                                          )
-                                            Expanded(
-                                              child: Padding(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 1,
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Row(
+                                                children: [
+                                                  const SizedBox(width: 27),
+                                                  Expanded(
+                                                    child: Row(
+                                                      children: [
+                                                        for (final entry
+                                                            in selectedWeek
+                                                                .entries)
+                                                          Expanded(
+                                                            child: Padding(
+                                                              padding:
+                                                                  const EdgeInsets.symmetric(
+                                                                    horizontal:
+                                                                        1,
+                                                                  ),
+                                                              child: Text(
+                                                                _weekdayLabel(
+                                                                  entry.date,
+                                                                ),
+                                                                textAlign:
+                                                                    TextAlign
+                                                                        .center,
+                                                                style: const TextStyle(
+                                                                  color:
+                                                                      appMutedText,
+                                                                  fontSize: 11,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w700,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                      ],
                                                     ),
-                                                child: Text(
-                                                  _weekdayLabel(
-                                                    selectedWeek
-                                                        .entries[index]
-                                                        .date,
                                                   ),
-                                                  textAlign: TextAlign.center,
-                                                  style: const TextStyle(
-                                                    color: appMutedText,
-                                                    fontSize: 11,
-                                                    fontWeight: FontWeight.w700,
-                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          )
+                                  : selectedDay == null
+                                  ? const Center(
+                                      child: _EmptyLine(
+                                        label:
+                                            'No data available for this app.',
+                                      ),
+                                    )
+                                  : Column(
+                                      children: [
+                                        Expanded(
+                                          child: Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              SizedBox(
+                                                width: 22,
+                                                child: _ChartGuides(
+                                                  guideValues:
+                                                      breakdownGuideValues,
                                                 ),
                                               ),
+                                              const SizedBox(width: 5),
+                                              Expanded(
+                                                child: LayoutBuilder(
+                                                  builder: (context, constraints) {
+                                                    return Stack(
+                                                      clipBehavior: Clip.none,
+                                                      children: [
+                                                        _ChartGrid(
+                                                          guideValues:
+                                                              breakdownGuideValues,
+                                                          height: constraints
+                                                              .maxHeight,
+                                                        ),
+                                                        Row(
+                                                          crossAxisAlignment:
+                                                              CrossAxisAlignment
+                                                                  .end,
+                                                          children: [
+                                                            for (
+                                                              var index = 0;
+                                                              index <
+                                                                  selectedDayHourlyMinutes
+                                                                      .length;
+                                                              index++
+                                                            )
+                                                              _BreakdownBar(
+                                                                onTap: () {
+                                                                  setState(() {
+                                                                    _activeBarIndex =
+                                                                        _activeBarIndex ==
+                                                                            index
+                                                                        ? null
+                                                                        : index;
+                                                                  });
+                                                                },
+                                                                onLongPressStart: () {
+                                                                  setState(() {
+                                                                    _activeBarIndex =
+                                                                        index;
+                                                                  });
+                                                                },
+                                                                onLongPressEnd: () {
+                                                                  setState(() {
+                                                                    if (_activeBarIndex ==
+                                                                        index) {
+                                                                      _activeBarIndex =
+                                                                          null;
+                                                                    }
+                                                                  });
+                                                                },
+                                                                height: _barHeightForMinutes(
+                                                                  selectedDayHourlyMinutes[index],
+                                                                  breakdownScaleTop,
+                                                                  breakdownPlotHeight,
+                                                                ),
+                                                                color:
+                                                                    _activeBarIndex ==
+                                                                        index
+                                                                    ? brand.withValues(
+                                                                        alpha:
+                                                                            0.72,
+                                                                      )
+                                                                    : brand,
+                                                                radius: 2,
+                                                              ),
+                                                          ],
+                                                        ),
+                                                        if (_activeBarIndex !=
+                                                            null)
+                                                          Positioned(
+                                                            left: _barTooltipLeft(
+                                                              _activeBarIndex!,
+                                                              breakdownBarCount,
+                                                              constraints
+                                                                  .maxWidth,
+                                                              _hourlyBarTooltipLabel(
+                                                                _activeBarIndex!,
+                                                                selectedDayHourlyMinutes[_activeBarIndex!],
+                                                              ),
+                                                            ),
+                                                            bottom:
+                                                                _barHeightForMinutes(
+                                                                  selectedDayHourlyMinutes[_activeBarIndex!],
+                                                                  breakdownScaleTop,
+                                                                  breakdownPlotHeight,
+                                                                ) +
+                                                                8,
+                                                            child: _BarTooltip(
+                                                              label: _hourlyBarTooltipLabel(
+                                                                _activeBarIndex!,
+                                                                selectedDayHourlyMinutes[_activeBarIndex!],
+                                                              ),
+                                                            ),
+                                                          ),
+                                                      ],
+                                                    );
+                                                  },
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          children: [
+                                            const SizedBox(width: 27),
+                                            Expanded(
+                                              child: LayoutBuilder(
+                                                builder: (context, constraints) {
+                                                  return SizedBox(
+                                                    height: 14,
+                                                    child: Stack(
+                                                      clipBehavior: Clip.none,
+                                                      children: [
+                                                        for (final tick
+                                                            in _dailyAxisTicks)
+                                                          Positioned(
+                                                            left:
+                                                                ((constraints
+                                                                            .maxWidth -
+                                                                        1) *
+                                                                    ((tick.hour +
+                                                                            0.5) /
+                                                                        24)) -
+                                                                16,
+                                                            width: 32,
+                                                            child: Text(
+                                                              tick.label,
+                                                              textAlign:
+                                                                  TextAlign
+                                                                      .center,
+                                                              style: const TextStyle(
+                                                                color:
+                                                                    appMutedText,
+                                                                fontSize: 9,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                      ],
+                                                    ),
+                                                  );
+                                                },
+                                              ),
                                             ),
-                                        ],
-                                      ),
+                                          ],
+                                        ),
+                                      ],
                                     ),
-                                  ],
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _LabeledValue(
+                                    label:
+                                        _breakdownMode == _BreakdownMode.weekly
+                                        ? 'Week Total'
+                                        : 'Day Total',
+                                    value: _formatMinutes(breakdownTotal),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _LabeledValue(
+                                    label:
+                                        _breakdownMode == _BreakdownMode.weekly
+                                        ? 'Daily Average'
+                                        : 'Hourly Average',
+                                    value: _formatMinutesWithSeconds(
+                                      breakdownAverage,
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _LabeledValue(
-                            label: 'Week Total',
-                            value: _formatMinutes(selectedWeekTotal),
-                          ),
+                          ],
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _LabeledValue(
-                            label: 'Daily Average',
-                            value: _formatMinutesWithSeconds(
-                              selectedWeekAverage,
+                        if (_breakdownMode == _BreakdownMode.weekly &&
+                            isLockedWeek)
+                          Positioned(
+                            top: -10,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: _PremiumWeeklyOverlay(
+                              onUpgrade: widget.onOpenPremium,
                             ),
                           ),
-                        ),
+                        if (_breakdownMode == _BreakdownMode.daily &&
+                            isLockedDay)
+                          Positioned(
+                            top: -10,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: _PremiumWeeklyOverlay(
+                              onUpgrade: widget.onOpenPremium,
+                            ),
+                          ),
                       ],
                     ),
                   ],
@@ -989,6 +1201,9 @@ List<StatisticsDailyPoint> _filterStatisticsDaily(
     case _AppDateRangePreset.last7Days:
       start = today.subtract(const Duration(days: 6));
       end = today;
+    case _AppDateRangePreset.last14Days:
+      start = today.subtract(const Duration(days: 13));
+      end = today;
     case _AppDateRangePreset.lastMonth:
       start = today.subtract(const Duration(days: 27));
       end = today;
@@ -1028,6 +1243,9 @@ String _dateRangeLabel(
       return preset.label;
     case _AppDateRangePreset.last7Days:
       final start = today.subtract(const Duration(days: 6));
+      return '${_shortDate(start)} - ${_shortDate(today)}';
+    case _AppDateRangePreset.last14Days:
+      final start = today.subtract(const Duration(days: 13));
       return '${_shortDate(start)} - ${_shortDate(today)}';
     case _AppDateRangePreset.lastMonth:
       final start = today.subtract(const Duration(days: 27));
@@ -1129,6 +1347,14 @@ String _formatDecimalMetric(double value, {int decimalPlaces = 1}) {
     return _formatGroupedInt(value.toInt());
   }
   return _formatGroupedDouble(value, decimalPlaces: decimalPlaces);
+}
+
+String _formatTimesCount(int value) {
+  return '${_formatGroupedInt(value)} times';
+}
+
+String _formatTimesMetric(double value, {int decimalPlaces = 1}) {
+  return '${_formatDecimalMetric(value, decimalPlaces: decimalPlaces)} times';
 }
 
 String _barTooltipLabel(int? minutes) {

@@ -23,6 +23,7 @@ class HomeOverview extends StatelessWidget {
     required this.canShowNextMonth,
     required this.onOpenBlockedShorts,
     required this.onOpenRestrictedApps,
+    required this.onOpenUsageAppStatistics,
     required this.onShareApp,
     required this.onPreviousMonth,
     required this.onNextMonth,
@@ -43,6 +44,7 @@ class HomeOverview extends StatelessWidget {
   final bool canShowNextMonth;
   final VoidCallback onOpenBlockedShorts;
   final VoidCallback onOpenRestrictedApps;
+  final ValueChanged<AppUsageSegment> onOpenUsageAppStatistics;
   final VoidCallback onShareApp;
   final VoidCallback onPreviousMonth;
   final VoidCallback onNextMonth;
@@ -104,7 +106,10 @@ class HomeOverview extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Center(
-                  child: _ScrollMinutesRing(segments: usageSegments),
+                  child: _ScrollMinutesRing(
+                    segments: usageSegments,
+                    onSegmentTap: onOpenUsageAppStatistics,
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -276,13 +281,44 @@ class _DailyTrackerCard extends StatelessWidget {
   }
 }
 
-class _ScrollMinutesRing extends StatelessWidget {
-  const _ScrollMinutesRing({required this.segments});
+class _ScrollMinutesRing extends StatefulWidget {
+  const _ScrollMinutesRing({
+    required this.segments,
+    this.onSegmentTap,
+  });
 
   final List<AppUsageSegment> segments;
+  final ValueChanged<AppUsageSegment>? onSegmentTap;
+
+  @override
+  State<_ScrollMinutesRing> createState() => _ScrollMinutesRingState();
+}
+
+class _ScrollMinutesRingState extends State<_ScrollMinutesRing> {
+  static const _ringSize = Size(270, 270);
+  int? _highlightedSegmentIndex;
 
   int get _totalMinutes {
-    return segments.fold<int>(0, (sum, segment) => sum + segment.minutes);
+    return widget.segments.fold<int>(0, (sum, segment) => sum + segment.minutes);
+  }
+
+  void _setHighlightedSegment(Offset localPosition) {
+    final segmentIndex = _segmentIndexForRingPosition(
+      localPosition: localPosition,
+      size: _ringSize,
+      segments: widget.segments,
+    );
+    if (segmentIndex == _highlightedSegmentIndex) return;
+    setState(() {
+      _highlightedSegmentIndex = segmentIndex;
+    });
+  }
+
+  void _clearHighlightedSegment() {
+    if (_highlightedSegmentIndex == null) return;
+    setState(() {
+      _highlightedSegmentIndex = null;
+    });
   }
 
   @override
@@ -294,39 +330,77 @@ class _ScrollMinutesRing extends StatelessWidget {
         SizedBox(
           width: 270,
           height: 270,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              SizedBox.expand(
-                child: CustomPaint(
-                  painter: _SegmentedRingPainter(segments: segments),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (details) {
+              _setHighlightedSegment(details.localPosition);
+            },
+            onTapCancel: _clearHighlightedSegment,
+            onTapUp: widget.onSegmentTap == null
+                ? null
+                : (details) {
+                    _setHighlightedSegment(details.localPosition);
+                    final tappedSegment = _segmentForRingPosition(
+                      localPosition: details.localPosition,
+                      size: _ringSize,
+                      segments: widget.segments,
+                    );
+                    if (tappedSegment == null) return;
+                    Future<void>.delayed(const Duration(milliseconds: 70), () {
+                      if (!mounted) return;
+                      widget.onSegmentTap!(tappedSegment);
+                    });
+                    Future<void>.delayed(const Duration(milliseconds: 140), () {
+                      if (!mounted) return;
+                      _clearHighlightedSegment();
+                    });
+                  },
+            onLongPressDown: (details) {
+              _setHighlightedSegment(details.localPosition);
+            },
+            onLongPressMoveUpdate: (details) {
+              _setHighlightedSegment(details.localPosition);
+            },
+            onLongPressEnd: (_) {
+              _clearHighlightedSegment();
+            },
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                SizedBox.expand(
+                  child: CustomPaint(
+                    painter: _SegmentedRingPainter(
+                      segments: widget.segments,
+                      highlightedSegmentIndex: _highlightedSegmentIndex,
+                    ),
+                  ),
                 ),
-              ),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    hasActivity
-                        ? _formatTodayDuration(_totalMinutes)
-                        : 'No activity',
-                    style: const TextStyle(
-                      color: appText,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      hasActivity
+                          ? _formatTodayDuration(_totalMinutes)
+                          : 'No activity',
+                      style: const TextStyle(
+                        color: appText,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'TODAY',
-                    style: const TextStyle(
-                      color: appMutedText,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                    const SizedBox(height: 4),
+                    Text(
+                      'TODAY',
+                      style: const TextStyle(
+                        color: appMutedText,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -872,19 +946,79 @@ List<InlineSpan> _streakValueSpans(BuildContext context, String value) {
 class AppUsageSegment {
   const AppUsageSegment({
     required this.appName,
+    required this.packageName,
     required this.minutes,
     required this.color,
   });
 
   final String appName;
+  final String packageName;
   final int minutes;
   final Color color;
 }
 
+AppUsageSegment? _segmentForRingPosition({
+  required Offset localPosition,
+  required Size size,
+  required List<AppUsageSegment> segments,
+}) {
+  final index = _segmentIndexForRingPosition(
+    localPosition: localPosition,
+    size: size,
+    segments: segments,
+  );
+  if (index == null) return null;
+  return segments[index];
+}
+
+int? _segmentIndexForRingPosition({
+  required Offset localPosition,
+  required Size size,
+  required List<AppUsageSegment> segments,
+}) {
+  final total = segments.fold<int>(0, (sum, segment) => sum + segment.minutes);
+  if (segments.isEmpty || total <= 0) return null;
+
+  final center = Offset(size.width / 2, size.height / 2);
+  final offset = localPosition - center;
+  final distance = offset.distance;
+  const radius = 90.0;
+  const strokeWidth = _SegmentedRingPainter._strokeWidth;
+  final innerRadius = radius - (strokeWidth / 2) - 12;
+  final outerRadius = radius + (strokeWidth / 2) + 12;
+  if (distance < innerRadius || distance > outerRadius) {
+    return null;
+  }
+
+  var angle = math.atan2(offset.dy, offset.dx) + (math.pi / 2);
+  if (angle < 0) {
+    angle += math.pi * 2;
+  }
+
+  var currentAngle = 0.0;
+  final gap = segments.length > 1 ? _SegmentedRingPainter._segmentGap : 0.0;
+  for (var index = 0; index < segments.length; index++) {
+    final segment = segments[index];
+    final sweepAngle = (segment.minutes / total) * math.pi * 2;
+    final visibleStart = currentAngle + (gap / 2);
+    final visibleEnd = currentAngle + math.max(0.0, sweepAngle - (gap / 2));
+    if (angle >= visibleStart && angle <= visibleEnd) {
+      return index;
+    }
+    currentAngle += sweepAngle;
+  }
+
+  return null;
+}
+
 class _SegmentedRingPainter extends CustomPainter {
-  const _SegmentedRingPainter({required this.segments});
+  const _SegmentedRingPainter({
+    required this.segments,
+    required this.highlightedSegmentIndex,
+  });
 
   final List<AppUsageSegment> segments;
+  final int? highlightedSegmentIndex;
   static const _strokeWidth = 11.0;
   static const _segmentGap = 0.04;
 
@@ -914,11 +1048,14 @@ class _SegmentedRingPainter extends CustomPainter {
     var startAngle = -math.pi / 2;
     final gap = segments.length > 1 ? _segmentGap : 0.0;
 
-    for (final segment in segments) {
+    for (var index = 0; index < segments.length; index++) {
+      final segment = segments[index];
       final sweepAngle = (segment.minutes / total) * math.pi * 2;
       final visibleSweep = math.max(0.0, sweepAngle - gap);
       final visibleStart = startAngle + (gap / 2);
+      final isHighlighted = highlightedSegmentIndex == index;
       segmentPaint.color = segment.color;
+      segmentPaint.strokeWidth = isHighlighted ? _strokeWidth + 8 : _strokeWidth;
       canvas.drawArc(rect, visibleStart, visibleSweep, false, segmentPaint);
       if (segment.appName.isNotEmpty) {
         _drawSegmentLabel(
@@ -926,6 +1063,7 @@ class _SegmentedRingPainter extends CustomPainter {
           center: center,
           angle: startAngle + (sweepAngle / 2),
           segment: segment,
+          isHighlighted: isHighlighted,
         );
       }
       startAngle += sweepAngle;
@@ -937,14 +1075,15 @@ class _SegmentedRingPainter extends CustomPainter {
     required Offset center,
     required double angle,
     required AppUsageSegment segment,
+    required bool isHighlighted,
   }) {
-    const maxLabelWidth = 72.0;
+    final maxLabelWidth = isHighlighted ? 90.0 : 72.0;
     final textPainter = TextPainter(
       text: TextSpan(
         text: segment.appName,
-        style: const TextStyle(
+        style: TextStyle(
           color: appText,
-          fontSize: 11,
+          fontSize: isHighlighted ? 13 : 11,
           fontWeight: FontWeight.w700,
         ),
       ),
@@ -956,7 +1095,7 @@ class _SegmentedRingPainter extends CustomPainter {
     final horizontalBias = math.cos(angle).abs();
     final verticalBias = math.sin(angle).abs();
     final labelRadius =
-        102.0 +
+        (isHighlighted ? 108.0 : 102.0) +
         ((textPainter.width / 2) * horizontalBias) +
         ((textPainter.height / 2) * verticalBias) +
         5.0;
@@ -974,7 +1113,8 @@ class _SegmentedRingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_SegmentedRingPainter oldDelegate) {
-    return segments != oldDelegate.segments;
+    return segments != oldDelegate.segments ||
+        highlightedSegmentIndex != oldDelegate.highlightedSegmentIndex;
   }
 }
 
