@@ -521,10 +521,12 @@ class _HomeShortcutCard extends StatelessWidget {
 class _BlockedShortsTrail extends StatelessWidget {
   const _BlockedShortsTrail({
     required this.showInstagram,
+    required this.showSnapchat,
     required this.showYouTube,
   });
 
   final bool showInstagram;
+  final bool showSnapchat;
   final bool showYouTube;
 
   @override
@@ -540,6 +542,12 @@ class _BlockedShortsTrail extends StatelessWidget {
         icons.add(const SizedBox(width: 6));
       }
       icons.add(const _AppIcon(assetPath: 'assets/apps/youtube.svg', size: 24));
+    }
+    if (showSnapchat) {
+      if (icons.isNotEmpty) {
+        icons.add(const SizedBox(width: 6));
+      }
+      icons.add(const _AppIcon(assetPath: 'assets/apps/snapchat.svg', size: 24));
     }
 
     if (icons.isEmpty) {
@@ -625,6 +633,7 @@ class _HomeShortcutCardsRow extends StatelessWidget {
                   onTap: onOpenBlockedShorts,
                   trailing: _BlockedShortsTrail(
                     showInstagram: blockSettings['instagram_reels'] ?? false,
+                    showSnapchat: blockSettings['snapchat_spotlight'] ?? false,
                     showYouTube: blockSettings['youtube_shorts'] ?? false,
                   ),
                 ),
@@ -1175,6 +1184,11 @@ class _ResponsiveRestrictedAppsTrail extends StatelessWidget {
       settingKey: 'instagram_app',
       pauseOnOpenKey: 'instagram_pause_on_open',
       assetPath: 'assets/apps/instagram.svg',
+    ),
+    _RestrictedAppIconData(
+      settingKey: 'snapchat_app',
+      pauseOnOpenKey: 'snapchat_pause_on_open',
+      assetPath: 'assets/apps/snapchat.svg',
     ),
     _RestrictedAppIconData(
       settingKey: 'youtube_app',

@@ -42,8 +42,11 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private var promptPackageName: String? = null
     private var lastInstagramReelsScanAtMillis = 0L
     private var instagramReelsDetectedUntilMillis = 0L
+    private var instagramAllowedDmReelFingerprint: String? = null
     private var lastYouTubeShortsScanAtMillis = 0L
     private var youTubeShortsDetectedUntilMillis = 0L
+    private var lastSnapchatSpotlightScanAtMillis = 0L
+    private var snapchatSpotlightDetectedUntilMillis = 0L
     private val lastVisibleBlockedWebsiteByPackage = mutableMapOf<String, String>()
 
     override fun onServiceConnected() {
@@ -63,7 +66,6 @@ class AppGuardAccessibilityService : AccessibilityService() {
         }
 
         val packageName = event.packageName?.toString() ?: return
-
         val previousPackageName = lastForegroundPackage
         val packageChanged = previousPackageName != packageName
         if (previousPackageName != null && previousPackageName != packageName) {
@@ -73,9 +75,13 @@ class AppGuardAccessibilityService : AccessibilityService() {
             lastForegroundPackage = packageName
             if (packageName != INSTAGRAM_PACKAGE_NAME) {
                 clearInstagramReelsDetectionCache()
+                clearInstagramDmAllowedReel()
             }
             if (!isYouTubePackage(packageName)) {
                 clearYouTubeShortsDetectionCache()
+            }
+            if (packageName != SNAPCHAT_PACKAGE_NAME) {
+                clearSnapchatSpotlightDetectionCache()
             }
             if (
                 promptActive &&
@@ -124,6 +130,11 @@ class AppGuardAccessibilityService : AccessibilityService() {
         if (isYouTubePackage(packageName)) {
             if (!shouldOpenYouTubeBlockPrompt(packageName, eventType)) return
             openYouTubePrompt()
+            return
+        }
+        if (packageName == SNAPCHAT_PACKAGE_NAME) {
+            if (!shouldOpenSnapchatBlockPrompt(eventType)) return
+            openSnapchatPrompt()
         }
     }
 
@@ -145,6 +156,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         return when {
             packageName == INSTAGRAM_PACKAGE_NAME -> now < instagramAllowedUntilMillis
             isYouTubePackage(packageName) -> now < youTubeAllowedUntilMillis
+            packageName == SNAPCHAT_PACKAGE_NAME -> now < snapchatAllowedUntilMillis
             else -> false
         }
     }
@@ -182,6 +194,11 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private fun isYouTubeShortsBlockingEnabled(): Boolean {
         return getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(YOUTUBE_SHORTS_SETTING_KEY, false)
+    }
+
+    private fun isSnapchatSpotlightBlockingEnabled(): Boolean {
+        return getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(SNAPCHAT_SPOTLIGHT_SETTING_KEY, false)
     }
 
     private fun getTodayForegroundMillis(appLimit: AppLimit): Long {
@@ -296,6 +313,20 @@ class AppGuardAccessibilityService : AccessibilityService() {
             target = TARGET_YOUTUBE,
             sourcePackageName = lastForegroundPackage,
             appLabel = "YouTube",
+        )
+    }
+
+    private fun openSnapchatPrompt() {
+        promptActive = true
+        recordStatsEvent(
+            eventType = STATS_EVENT_SPOTLIGHT_BLOCK,
+            packageName = lastForegroundPackage ?: SNAPCHAT_PACKAGE_NAME,
+            target = TARGET_SNAPCHAT,
+        )
+        showPromptActivity(
+            target = TARGET_SNAPCHAT,
+            sourcePackageName = lastForegroundPackage,
+            appLabel = "Snapchat",
         )
     }
 
@@ -417,6 +448,9 @@ class AppGuardAccessibilityService : AccessibilityService() {
             packageName == INSTAGRAM_PACKAGE_NAME -> {
                 prefs.getBoolean(INSTAGRAM_PAUSE_ON_OPEN_SETTING_KEY, false)
             }
+            packageName == SNAPCHAT_PACKAGE_NAME -> {
+                prefs.getBoolean(SNAPCHAT_PAUSE_ON_OPEN_SETTING_KEY, false)
+            }
             isYouTubePackage(packageName) -> {
                 prefs.getBoolean(YOUTUBE_PAUSE_ON_OPEN_SETTING_KEY, false)
             }
@@ -501,6 +535,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private fun getTrackedAppPromptLabel(packageName: String): String {
         return when {
             packageName == INSTAGRAM_PACKAGE_NAME -> "Instagram"
+            packageName == SNAPCHAT_PACKAGE_NAME -> "Snapchat"
             isYouTubePackage(packageName) -> "YouTube"
             else -> {
                 getCustomTrackedApps()
@@ -622,11 +657,26 @@ class AppGuardAccessibilityService : AccessibilityService() {
                     eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) &&
                 isInstagramReelsScreen()
             ) {
+                val reelFingerprint = buildCurrentInstagramReelFingerprint()
                 if (isInstagramReelsDmsAllowed() && isInstagramDmThreadContext()) {
+                    instagramAllowedDmReelFingerprint = reelFingerprint
                     return false
+                }
+                if (
+                    reelFingerprint != null &&
+                    reelFingerprint == instagramAllowedDmReelFingerprint
+                ) {
+                    return false
+                }
+                if (
+                    instagramAllowedDmReelFingerprint != null &&
+                    reelFingerprint != instagramAllowedDmReelFingerprint
+                ) {
+                    clearInstagramDmAllowedReel()
                 }
                 return true
             }
+            clearInstagramDmAllowedReel()
         }
         if (isInstagramStoriesBlockingEnabled()) {
             if (
@@ -653,6 +703,17 @@ class AppGuardAccessibilityService : AccessibilityService() {
             }
         }
         return false
+    }
+
+    private fun shouldOpenSnapchatBlockPrompt(eventType: Int): Boolean {
+        if (!isSnapchatSpotlightBlockingEnabled()) return false
+        if (
+            eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+            eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        ) {
+            return false
+        }
+        return isSnapchatSpotlightScreen()
     }
 
     private fun isInstagramReelsScreen(): Boolean {
@@ -687,6 +748,10 @@ class AppGuardAccessibilityService : AccessibilityService() {
         instagramReelsDetectedUntilMillis = 0L
     }
 
+    private fun clearInstagramDmAllowedReel() {
+        instagramAllowedDmReelFingerprint = null
+    }
+
     private fun isInstagramDmThreadContext(): Boolean {
         val rootNode = rootInActiveWindow ?: return false
         return instagramDmThreadViewIds.any { viewId ->
@@ -697,6 +762,51 @@ class AppGuardAccessibilityService : AccessibilityService() {
                     node.viewIdResourceName == viewId
             }
         }
+    }
+
+    private fun buildCurrentInstagramReelFingerprint(): String? {
+        val rootNode = rootInActiveWindow ?: return null
+        val reelNode = findVisibleNodeByViewId(rootNode, INSTAGRAM_REELS_ROOT_LAYOUT_VIEW_ID)
+            ?: findVisibleNodeByViewId(rootNode, INSTAGRAM_REELS_CONTAINER_VIEW_ID)
+            ?: return null
+
+        val authorText = findVisibleNodeText(rootNode, INSTAGRAM_REELS_AUTHOR_USERNAME_VIEW_ID)
+        val likeCountText = findVisibleNodeText(rootNode, INSTAGRAM_REELS_LIKE_COUNT_VIEW_ID)
+        val reelText = buildNodeText(reelNode)
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        val fingerprintParts = listOf(authorText, likeCountText, reelText)
+            .mapNotNull { value -> value?.trim()?.takeIf { it.isNotBlank() } }
+        if (fingerprintParts.isEmpty()) return null
+        return fingerprintParts.joinToString(separator = "|").take(600)
+    }
+
+    private fun findVisibleNodeByViewId(
+        rootNode: AccessibilityNodeInfo,
+        viewId: String,
+    ): AccessibilityNodeInfo? {
+        val nodes = rootNode.findAccessibilityNodeInfosByViewId(viewId) ?: return null
+        return nodes.firstOrNull { node ->
+            node?.isVisibleToUser == true &&
+                !node.isContentInvalid &&
+                node.viewIdResourceName == viewId
+        }
+    }
+
+    private fun findVisibleNodeText(
+        rootNode: AccessibilityNodeInfo,
+        viewId: String,
+    ): String? {
+        val node = findVisibleNodeByViewId(rootNode, viewId) ?: return null
+        val text = node.text?.toString()?.trim()
+        if (!text.isNullOrBlank()) return text
+        val description = node.contentDescription?.toString()?.trim()
+        if (!description.isNullOrBlank()) return description
+        return buildNodeText(node)
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .takeIf { it.isNotBlank() }
     }
 
     private fun isYouTubeShortsScreen(packageName: String): Boolean {
@@ -730,6 +840,39 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private fun clearYouTubeShortsDetectionCache() {
         lastYouTubeShortsScanAtMillis = 0L
         youTubeShortsDetectedUntilMillis = 0L
+    }
+
+    private fun isSnapchatSpotlightScreen(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now < snapchatSpotlightDetectedUntilMillis) {
+            return true
+        }
+        if (now - lastSnapchatSpotlightScanAtMillis < SNAPCHAT_SPOTLIGHT_SCAN_DEBOUNCE_MILLIS) {
+            return false
+        }
+        lastSnapchatSpotlightScanAtMillis = now
+
+        val rootNode = rootInActiveWindow ?: return false
+        val spotlightNodes = rootNode.findAccessibilityNodeInfosByViewId(
+            SNAPCHAT_SPOTLIGHT_CONTAINER_VIEW_ID,
+        ) ?: return false
+
+        val isDetected = spotlightNodes.any { node ->
+            node?.isVisibleToUser == true &&
+                !node.isContentInvalid &&
+                node.viewIdResourceName == SNAPCHAT_SPOTLIGHT_CONTAINER_VIEW_ID
+        }
+
+        if (isDetected) {
+            snapchatSpotlightDetectedUntilMillis = now + SNAPCHAT_SPOTLIGHT_DETECTION_CACHE_MILLIS
+        }
+
+        return isDetected
+    }
+
+    private fun clearSnapchatSpotlightDetectionCache() {
+        lastSnapchatSpotlightScanAtMillis = 0L
+        snapchatSpotlightDetectedUntilMillis = 0L
     }
 
     private fun buildYouTubeShortsContainerViewIds(packageName: String): List<String> {
@@ -872,20 +1015,25 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val AWAITING_USAGE_ACCESS_ENABLE_PREF_KEY = "awaiting_usage_access_enable"
         const val USAGE_ACCESS_ENABLED_SUCCESS_PREF_KEY = "usage_access_enabled_success"
         const val INSTAGRAM_PACKAGE_NAME = "com.instagram.android"
+        const val SNAPCHAT_PACKAGE_NAME = "com.snapchat.android"
         const val YOUTUBE_PACKAGE_NAME = "com.google.android.youtube"
         const val YOUTUBE_REVANCED_PACKAGE_PREFIX = "app.revanced.android.youtube"
         const val INSTAGRAM_REELS_SETTING_KEY = "instagram_reels"
         const val INSTAGRAM_REELS_DMS_SETTING_KEY = "instagram_reels_dms"
         const val INSTAGRAM_PAUSE_ON_OPEN_SETTING_KEY = "instagram_pause_on_open"
         const val INSTAGRAM_STORIES_SETTING_KEY = "instagram_explore"
+        const val SNAPCHAT_PAUSE_ON_OPEN_SETTING_KEY = "snapchat_pause_on_open"
+        const val SNAPCHAT_SPOTLIGHT_SETTING_KEY = "snapchat_spotlight"
         const val YOUTUBE_PAUSE_ON_OPEN_SETTING_KEY = "youtube_pause_on_open"
         const val YOUTUBE_SHORTS_SETTING_KEY = "youtube_shorts"
         const val TARGET_INSTAGRAM = "instagram"
+        const val TARGET_SNAPCHAT = "snapchat"
         const val TARGET_YOUTUBE = "youtube"
         const val TARGET_PAUSE_ON_OPEN = "pause_on_open"
         const val TARGET_WEBSITE = "website"
         const val TARGET_DAILY_LIMIT = "daily_limit"
         const val STATS_EVENT_REELS_BLOCK = "reels_block"
+        const val STATS_EVENT_SPOTLIGHT_BLOCK = "spotlight_block"
         const val STATS_EVENT_SHORTS_BLOCK = "shorts_block"
         const val STATS_EVENT_WEBSITE_BLOCK = "website_block"
         const val STATS_EVENT_PAUSE_ON_OPEN_PROMPT = "pause_on_open_prompt"
@@ -896,10 +1044,18 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val STATS_EVENT_DAILY_LIMIT_BYPASS = "daily_limit_bypass"
         private const val INSTAGRAM_REELS_CONTAINER_VIEW_ID =
             "com.instagram.android:id/clips_video_container"
+        private const val INSTAGRAM_REELS_ROOT_LAYOUT_VIEW_ID =
+            "com.instagram.android:id/root_clips_layout"
+        private const val INSTAGRAM_REELS_AUTHOR_USERNAME_VIEW_ID =
+            "com.instagram.android:id/clips_author_username"
+        private const val INSTAGRAM_REELS_LIKE_COUNT_VIEW_ID =
+            "com.instagram.android:id/like_count"
         private val instagramDmThreadViewIds = listOf(
             "com.instagram.android:id/direct_thread_header",
             "com.instagram.android:id/reply_bar_edittext",
         )
+        private const val SNAPCHAT_SPOTLIGHT_CONTAINER_VIEW_ID =
+            "com.snapchat.android:id/spotlight_container"
         private const val YOUTUBE_SHORTS_CONTAINER_VIEW_ID_SUFFIX =
             "id/reel_player_underlay"
         private const val PROMPT_DEBUG_TAG = "TempusPromptOverlay"
@@ -909,12 +1065,18 @@ class AppGuardAccessibilityService : AccessibilityService() {
         private const val USAGE_ACCESS_WATCH_INTERVAL_MILLIS = 500L
         private const val INSTAGRAM_REELS_SCAN_DEBOUNCE_MILLIS = 250L
         private const val INSTAGRAM_REELS_DETECTION_CACHE_MILLIS = 1200L
+        private const val SNAPCHAT_SPOTLIGHT_SCAN_DEBOUNCE_MILLIS = 250L
+        private const val SNAPCHAT_SPOTLIGHT_DETECTION_CACHE_MILLIS = 1200L
         private const val YOUTUBE_SHORTS_SCAN_DEBOUNCE_MILLIS = 250L
         private const val YOUTUBE_SHORTS_DETECTION_CACHE_MILLIS = 1200L
         private val builtInTrackedAppLimits = listOf(
             AppLimit(
                 settingKey = "instagram_app",
                 packageNames = setOf("com.instagram.android"),
+            ),
+            AppLimit(
+                settingKey = "snapchat_app",
+                packageNames = setOf("com.snapchat.android"),
             ),
             AppLimit(
                 settingKey = "youtube_app",
@@ -934,6 +1096,9 @@ class AppGuardAccessibilityService : AccessibilityService() {
 
         @Volatile
         private var youTubeAllowedUntilMillis = 0L
+
+        @Volatile
+        private var snapchatAllowedUntilMillis = 0L
 
         @Volatile
         private var promptSuppressedUntilMillis = 0L
@@ -1030,12 +1195,16 @@ class AppGuardAccessibilityService : AccessibilityService() {
                 TARGET_YOUTUBE -> {
                     youTubeAllowedUntilMillis = allowedUntil
                 }
+                TARGET_SNAPCHAT -> {
+                    snapchatAllowedUntilMillis = allowedUntil
+                }
                 else -> {
                     instagramAllowedUntilMillis = allowedUntil
                 }
             }
             if (
                 normalizedTarget == TARGET_INSTAGRAM ||
+                    normalizedTarget == TARGET_SNAPCHAT ||
                     normalizedTarget == TARGET_YOUTUBE
             ) {
                 activeService?.recordStatsEvent(
@@ -1240,6 +1409,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
             Log.e(PROMPT_DEBUG_TAG, "Failed to relaunch app after permission enable", it)
         }
     }
+
 }
 
 private data class AppLimit(

@@ -1272,6 +1272,9 @@ String? _protectionKind(StatisticsApp app) {
       packageName.contains('revanced')) {
     return 'Shorts';
   }
+  if (id == 'snapchat' || packageName.contains('snapchat')) {
+    return 'Spotlight';
+  }
   return null;
 }
 
@@ -1293,6 +1296,12 @@ int _protectionBlockedCount(
     return daily.fold<int>(
       0,
       (sum, day) => sum + (day.appShortsBlocks[app.id] ?? 0),
+    );
+  }
+  if (id == 'snapchat' || packageName.contains('snapchat')) {
+    return daily.fold<int>(
+      0,
+      (sum, day) => sum + (day.appSpotlightBlocks[app.id] ?? 0),
     );
   }
   return 0;

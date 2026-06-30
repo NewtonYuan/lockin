@@ -126,6 +126,7 @@ class StatisticsDailyPoint {
     required this.bypasses,
     required this.reelsBlocks,
     required this.shortsBlocks,
+    required this.spotlightBlocks,
     required this.websiteBlocks,
     required this.pauseOnOpenPrompts,
     required this.dailyLimitHits,
@@ -141,6 +142,7 @@ class StatisticsDailyPoint {
     required this.appLongestSessionMinutes,
     required this.appReelsBlocks,
     required this.appShortsBlocks,
+    required this.appSpotlightBlocks,
     required this.appPauseOnOpenPrompts,
     required this.appDailyLimitHits,
     required this.appBypasses,
@@ -162,6 +164,7 @@ class StatisticsDailyPoint {
       bypasses: _readInt(map['bypasses']),
       reelsBlocks: _readInt(map['reelsBlocks']),
       shortsBlocks: _readInt(map['shortsBlocks']),
+      spotlightBlocks: _readInt(map['spotlightBlocks']),
       websiteBlocks: _readInt(map['websiteBlocks']),
       pauseOnOpenPrompts: _readInt(map['pauseOnOpenPrompts']),
       dailyLimitHits: _readInt(map['dailyLimitHits']),
@@ -203,6 +206,12 @@ class StatisticsDailyPoint {
       appShortsBlocks: {
         for (final entry
             in (((map['appShortsBlocks'] as Map?)?.entries) ??
+                <MapEntry<dynamic, dynamic>>[]))
+          '${entry.key}': _readInt(entry.value),
+      },
+      appSpotlightBlocks: {
+        for (final entry
+            in (((map['appSpotlightBlocks'] as Map?)?.entries) ??
                 <MapEntry<dynamic, dynamic>>[]))
           '${entry.key}': _readInt(entry.value),
       },
@@ -252,6 +261,7 @@ class StatisticsDailyPoint {
   final int bypasses;
   final int reelsBlocks;
   final int shortsBlocks;
+  final int spotlightBlocks;
   final int websiteBlocks;
   final int pauseOnOpenPrompts;
   final int dailyLimitHits;
@@ -267,6 +277,7 @@ class StatisticsDailyPoint {
   final Map<String, int> appLongestSessionMinutes;
   final Map<String, int> appReelsBlocks;
   final Map<String, int> appShortsBlocks;
+  final Map<String, int> appSpotlightBlocks;
   final Map<String, int> appPauseOnOpenPrompts;
   final Map<String, int> appDailyLimitHits;
   final Map<String, int> appBypasses;
@@ -289,6 +300,7 @@ class StatisticsProtection {
   const StatisticsProtection({
     required this.reelsBlocks,
     required this.shortsBlocks,
+    required this.spotlightBlocks,
     required this.websiteBlocks,
     required this.pauseOnOpenPrompts,
     required this.dailyLimitHits,
@@ -304,6 +316,7 @@ class StatisticsProtection {
     return StatisticsProtection(
       reelsBlocks: _readInt(map['reelsBlocks']),
       shortsBlocks: _readInt(map['shortsBlocks']),
+      spotlightBlocks: _readInt(map['spotlightBlocks']),
       websiteBlocks: _readInt(map['websiteBlocks']),
       pauseOnOpenPrompts: _readInt(map['pauseOnOpenPrompts']),
       dailyLimitHits: _readInt(map['dailyLimitHits']),
@@ -318,6 +331,7 @@ class StatisticsProtection {
 
   final int reelsBlocks;
   final int shortsBlocks;
+  final int spotlightBlocks;
   final int websiteBlocks;
   final int pauseOnOpenPrompts;
   final int dailyLimitHits;
@@ -364,6 +378,7 @@ class StatisticsApp {
     required this.longestSessionMinutes30d,
     required this.reelsBlocks,
     required this.shortsBlocks,
+    required this.spotlightBlocks,
     required this.pauseOnOpenPrompts,
     required this.dailyLimitHits,
     required this.bypasses,
@@ -386,6 +401,7 @@ class StatisticsApp {
       longestSessionMinutes30d: _readInt(map['longestSessionMinutes30d']),
       reelsBlocks: _readInt(map['reelsBlocks']),
       shortsBlocks: _readInt(map['shortsBlocks']),
+      spotlightBlocks: _readInt(map['spotlightBlocks']),
       pauseOnOpenPrompts: _readInt(map['pauseOnOpenPrompts']),
       dailyLimitHits: _readInt(map['dailyLimitHits']),
       bypasses: _readInt(map['bypasses']),
@@ -409,6 +425,7 @@ class StatisticsApp {
   final int longestSessionMinutes30d;
   final int reelsBlocks;
   final int shortsBlocks;
+  final int spotlightBlocks;
   final int pauseOnOpenPrompts;
   final int dailyLimitHits;
   final int bypasses;
@@ -2772,6 +2789,7 @@ StatisticsSnapshot _buildDummyStatisticsSnapshot(
     final appNameLower = app.appName.toLowerCase();
     final packageLower = app.packageName.toLowerCase();
     final isInstagram = packageLower.contains('instagram');
+    final isSnapchat = packageLower.contains('snapchat');
     final isYouTube =
         packageLower.contains('youtube') || packageLower.contains('revanced');
     final isTikTok =
@@ -2792,6 +2810,7 @@ StatisticsSnapshot _buildDummyStatisticsSnapshot(
       longestSessionMinutes30d: 28 + (index * 7),
       reelsBlocks: isInstagram ? 24 + emphasis * 3 : 0,
       shortsBlocks: isYouTube ? 16 + emphasis * 2 : 0,
+      spotlightBlocks: isSnapchat ? 14 + emphasis * 2 : 0,
       pauseOnOpenPrompts: (isInstagram || isYouTube || isTikTok)
           ? 8 + emphasis * 2
           : 5 + emphasis,
@@ -2816,6 +2835,7 @@ StatisticsSnapshot _buildDummyStatisticsSnapshot(
       bypasses: 1 + (dayIndex % 4),
       reelsBlocks: dayIndex % 3,
       shortsBlocks: dayIndex % 2,
+      spotlightBlocks: dayIndex.isEven ? 1 : 0,
       websiteBlocks: dayIndex % 2,
       pauseOnOpenPrompts: 2 + (dayIndex % 4),
       dailyLimitHits: dayIndex % 3,
@@ -2851,6 +2871,12 @@ StatisticsSnapshot _buildDummyStatisticsSnapshot(
         for (final app in apps)
           app.id: app.packageName.toLowerCase().contains('youtube')
               ? dayIndex % 2
+              : 0,
+      },
+      appSpotlightBlocks: {
+        for (final app in apps)
+          app.id: app.packageName.toLowerCase().contains('snapchat')
+              ? (dayIndex.isEven ? 1 : 0)
               : 0,
       },
       appPauseOnOpenPrompts: {
@@ -2894,6 +2920,10 @@ StatisticsSnapshot _buildDummyStatisticsSnapshot(
   final todayTrackedMinutes = daily.isEmpty ? 0 : daily.last.trackedMinutes;
   final totalReels = apps.fold<int>(0, (sum, app) => sum + app.reelsBlocks);
   final totalShorts = apps.fold<int>(0, (sum, app) => sum + app.shortsBlocks);
+  final totalSpotlight = apps.fold<int>(
+    0,
+    (sum, app) => sum + app.spotlightBlocks,
+  );
   final totalPauseOnOpen = apps.fold<int>(
     0,
     (sum, app) => sum + app.pauseOnOpenPrompts,
@@ -2942,12 +2972,14 @@ StatisticsSnapshot _buildDummyStatisticsSnapshot(
     protection: StatisticsProtection(
       reelsBlocks: totalReels,
       shortsBlocks: totalShorts,
+      spotlightBlocks: totalSpotlight,
       websiteBlocks: websites.fold<int>(0, (sum, site) => sum + site.blocks),
       pauseOnOpenPrompts: totalPauseOnOpen,
       dailyLimitHits: totalDailyLimitHits,
       totalBlocks:
           totalReels +
           totalShorts +
+          totalSpotlight +
           totalPauseOnOpen +
           totalDailyLimitHits +
           websites.fold<int>(0, (sum, site) => sum + site.blocks),
@@ -3002,6 +3034,7 @@ StatisticsSnapshot _statisticsSnapshotForDisplay(
           longestSessionMinutes30d: app.longestSessionMinutes30d,
           reelsBlocks: app.reelsBlocks,
           shortsBlocks: app.shortsBlocks,
+          spotlightBlocks: app.spotlightBlocks,
           pauseOnOpenPrompts: app.pauseOnOpenPrompts,
           dailyLimitHits: app.dailyLimitHits,
           bypasses: app.bypasses,
@@ -3046,6 +3079,9 @@ String _statisticsAppIdForPackageName(String packageName) {
   }
   if (packageLower == 'com.instagram.android') {
     return 'instagram';
+  }
+  if (packageLower == 'com.snapchat.android') {
+    return 'snapchat';
   }
   return packageName;
 }
@@ -3225,6 +3261,7 @@ List<StatisticsDailyPoint> _filterDailyByAppIds(
             bypasses: day.bypasses,
             reelsBlocks: day.reelsBlocks,
             shortsBlocks: day.shortsBlocks,
+            spotlightBlocks: day.spotlightBlocks,
             websiteBlocks: day.websiteBlocks,
             pauseOnOpenPrompts: day.pauseOnOpenPrompts,
             dailyLimitHits: day.dailyLimitHits,
@@ -3240,6 +3277,7 @@ List<StatisticsDailyPoint> _filterDailyByAppIds(
             appLongestSessionMinutes: const <String, int>{},
             appReelsBlocks: const <String, int>{},
             appShortsBlocks: const <String, int>{},
+            appSpotlightBlocks: const <String, int>{},
             appPauseOnOpenPrompts: const <String, int>{},
             appDailyLimitHits: const <String, int>{},
             appBypasses: const <String, int>{},
@@ -3276,6 +3314,10 @@ List<StatisticsDailyPoint> _filterDailyByAppIds(
       for (final entry in day.appShortsBlocks.entries)
         if (appIds.contains(entry.key)) entry.key: entry.value,
     };
+    final filteredAppSpotlightBlocks = <String, int>{
+      for (final entry in day.appSpotlightBlocks.entries)
+        if (appIds.contains(entry.key)) entry.key: entry.value,
+    };
     final filteredAppPauseOnOpenPrompts = <String, int>{
       for (final entry in day.appPauseOnOpenPrompts.entries)
         if (appIds.contains(entry.key)) entry.key: entry.value,
@@ -3309,6 +3351,7 @@ List<StatisticsDailyPoint> _filterDailyByAppIds(
       bypasses: day.bypasses,
       reelsBlocks: day.reelsBlocks,
       shortsBlocks: day.shortsBlocks,
+      spotlightBlocks: day.spotlightBlocks,
       websiteBlocks: day.websiteBlocks,
       pauseOnOpenPrompts: day.pauseOnOpenPrompts,
       dailyLimitHits: day.dailyLimitHits,
@@ -3329,6 +3372,7 @@ List<StatisticsDailyPoint> _filterDailyByAppIds(
       appLongestSessionMinutes: filteredAppLongestSessionMinutes,
       appReelsBlocks: filteredAppReelsBlocks,
       appShortsBlocks: filteredAppShortsBlocks,
+      appSpotlightBlocks: filteredAppSpotlightBlocks,
       appPauseOnOpenPrompts: filteredAppPauseOnOpenPrompts,
       appDailyLimitHits: filteredAppDailyLimitHits,
       appBypasses: filteredAppBypasses,

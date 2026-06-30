@@ -294,6 +294,39 @@ class BlockScreen extends StatelessWidget {
         isPremium: isPremium,
         onOpenPremium: onOpenPremium,
       ),
+      const SizedBox(height: 8),
+      _AppBlockCard(
+        appName: 'Snapchat',
+        iconAssetPath: 'assets/apps/snapchat.svg',
+        isInstalled: _isPackageInstalled('com.snapchat.android'),
+        isExpanded: expandedApps.contains('Snapchat'),
+        items: [
+          _BlockItemData.timeLimit(
+            keyName: 'snapchat_app',
+            label: 'Daily Time Limit',
+            minutes: dailyTimeLimits['snapchat_app'],
+            iconAssetPath: 'assets/icons/timer.svg',
+            iconSize: 24,
+          ),
+          _BlockItemData.toggle(
+            keyName: 'snapchat_pause_on_open',
+            label: 'Pause on Open',
+            value: blockSettings['snapchat_pause_on_open'] ?? false,
+            iconAssetPath: 'assets/icons/pause_on_open.svg',
+            iconSize: 24,
+          ),
+          _BlockItemData.toggle(
+            keyName: 'snapchat_spotlight',
+            label: 'Block Spotlight',
+            value: blockSettings['snapchat_spotlight'] ?? false,
+          ),
+        ],
+        onToggleExpanded: () => onToggleExpanded('Snapchat'),
+        onToggleSetting: onToggleSetting,
+        onSelectTimeLimit: onSelectTimeLimit,
+        isPremium: isPremium,
+        onOpenPremium: onOpenPremium,
+      ),
     ];
 
     children.add(const SizedBox(height: 14));
@@ -350,6 +383,7 @@ class BlockScreen extends StatelessWidget {
   Future<void> _promptForInstalledApp(BuildContext context) async {
     final existingPackages = <String>{
       'com.instagram.android',
+      'com.snapchat.android',
       'com.google.android.youtube',
       ...customTrackedApps.map((app) => app.packageName),
     };

@@ -88,6 +88,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final Set<String> _expandedApps = {};
   final Map<String, int?> _dailyTimeLimits = {
     'instagram_app': null,
+    'snapchat_app': null,
     'youtube_app': null,
   };
   final Map<String, bool> _blockSettings = {
@@ -95,6 +96,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     'instagram_reels': false,
     'instagram_reels_dms': false,
     'instagram_explore': false,
+    'snapchat_pause_on_open': false,
+    'snapchat_spotlight': false,
     'youtube_pause_on_open': false,
     'youtube_shorts': false,
     'youtube_home_feed': false,
@@ -1338,7 +1341,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _selectTab(
             1,
             update: () {
-              _expandedApps.addAll({'Instagram', 'YouTube'});
+              _expandedApps.addAll({'Instagram', 'Snapchat', 'YouTube'});
             },
           );
         },
@@ -1346,7 +1349,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _selectTab(
             1,
             update: () {
-              _expandedApps.removeAll({'Instagram', 'YouTube'});
+              _expandedApps.removeAll({'Instagram', 'Snapchat', 'YouTube'});
             },
           );
         },
@@ -1449,7 +1452,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             if (_expandedApps.contains(appName)) {
               _expandedApps.remove(appName);
             } else {
-              const builtInApps = {'Instagram', 'YouTube'};
+              const builtInApps = {'Instagram', 'Snapchat', 'YouTube'};
               final customAppKeys = _customTrackedApps
                   .map((app) => app.packageName)
                   .toSet();

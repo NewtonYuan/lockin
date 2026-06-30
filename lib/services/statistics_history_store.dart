@@ -131,6 +131,7 @@ class StatisticsHistoryStore {
     return StatisticsProtection(
       reelsBlocks: daily.fold<int>(0, (sum, day) => sum + day.reelsBlocks),
       shortsBlocks: daily.fold<int>(0, (sum, day) => sum + day.shortsBlocks),
+      spotlightBlocks: daily.fold<int>(0, (sum, day) => sum + day.spotlightBlocks),
       websiteBlocks: daily.fold<int>(0, (sum, day) => sum + day.websiteBlocks),
       pauseOnOpenPrompts: daily.fold<int>(
         0,
@@ -243,6 +244,10 @@ class StatisticsHistoryStore {
           0,
           (sum, day) => sum + (day.appShortsBlocks[appId] ?? 0),
         ),
+        spotlightBlocks: mergedDaily.fold<int>(
+          0,
+          (sum, day) => sum + (day.appSpotlightBlocks[appId] ?? 0),
+        ),
         pauseOnOpenPrompts: mergedDaily.fold<int>(
           0,
           (sum, day) => sum + (day.appPauseOnOpenPrompts[appId] ?? 0),
@@ -323,6 +328,7 @@ class StatisticsHistoryStore {
       'protection': {
         'reelsBlocks': snapshot.protection.reelsBlocks,
         'shortsBlocks': snapshot.protection.shortsBlocks,
+        'spotlightBlocks': snapshot.protection.spotlightBlocks,
         'websiteBlocks': snapshot.protection.websiteBlocks,
         'pauseOnOpenPrompts': snapshot.protection.pauseOnOpenPrompts,
         'dailyLimitHits': snapshot.protection.dailyLimitHits,
@@ -357,6 +363,7 @@ class StatisticsHistoryStore {
               'longestSessionMinutes30d': app.longestSessionMinutes30d,
               'reelsBlocks': app.reelsBlocks,
               'shortsBlocks': app.shortsBlocks,
+              'spotlightBlocks': app.spotlightBlocks,
               'pauseOnOpenPrompts': app.pauseOnOpenPrompts,
               'dailyLimitHits': app.dailyLimitHits,
               'bypasses': app.bypasses,
@@ -385,6 +392,7 @@ class StatisticsHistoryStore {
       'bypasses': day.bypasses,
       'reelsBlocks': day.reelsBlocks,
       'shortsBlocks': day.shortsBlocks,
+      'spotlightBlocks': day.spotlightBlocks,
       'websiteBlocks': day.websiteBlocks,
       'pauseOnOpenPrompts': day.pauseOnOpenPrompts,
       'dailyLimitHits': day.dailyLimitHits,
@@ -399,6 +407,7 @@ class StatisticsHistoryStore {
       'appLongestSessionMinutes': day.appLongestSessionMinutes,
       'appReelsBlocks': day.appReelsBlocks,
       'appShortsBlocks': day.appShortsBlocks,
+      'appSpotlightBlocks': day.appSpotlightBlocks,
       'appPauseOnOpenPrompts': day.appPauseOnOpenPrompts,
       'appDailyLimitHits': day.appDailyLimitHits,
       'appBypasses': day.appBypasses,

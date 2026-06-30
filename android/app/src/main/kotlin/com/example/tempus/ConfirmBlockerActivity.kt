@@ -32,12 +32,14 @@ class ConfirmBlockerActivity : ComponentActivity() {
         get() = intent?.getStringExtra(EXTRA_APP_LABEL)
             ?.takeIf { it.isNotBlank() }
             ?: when (target) {
+                TARGET_SNAPCHAT -> "Snapchat"
                 TARGET_YOUTUBE -> "YouTube"
                 else -> "Instagram"
             }
 
     private val blockedLabel: String
         get() = when (target) {
+            TARGET_SNAPCHAT -> "Spotlight"
             TARGET_YOUTUBE -> "Shorts"
             else -> "Reels"
         }
@@ -416,6 +418,7 @@ class ConfirmBlockerActivity : ComponentActivity() {
         const val EXTRA_TARGET = "target"
         const val EXTRA_APP_LABEL = "app_label"
         const val TARGET_INSTAGRAM = "instagram"
+        const val TARGET_SNAPCHAT = "snapchat"
         const val TARGET_YOUTUBE = "youtube"
         const val BRAND = 0xFF00688F.toInt()
         const val BRAND_PRESSED = 0xFF00A6D6.toInt()

@@ -99,6 +99,7 @@ open class MainActivity : FlutterFragmentActivity() {
     }
     private val builtInTrackedDailyTimeLimitKeys = listOf(
         "instagram_app",
+        "snapchat_app",
         "youtube_app",
     )
     private val trackedBlockSettingKeys = listOf(
@@ -106,6 +107,8 @@ open class MainActivity : FlutterFragmentActivity() {
         "instagram_reels",
         "instagram_reels_dms",
         "instagram_explore",
+        "snapchat_pause_on_open",
+        "snapchat_spotlight",
         "youtube_pause_on_open",
         "youtube_shorts",
         "youtube_home_feed",
@@ -740,6 +743,16 @@ open class MainActivity : FlutterFragmentActivity() {
                     )
                 }
             }
+            val appSpotlightBlocks = buildMap<String, Int> {
+                for (definition in appDefinitions) {
+                    put(
+                        definition.id,
+                        appEventsById[definition.id].orEmpty().count { event ->
+                            event.type == AppGuardAccessibilityService.STATS_EVENT_SPOTLIGHT_BLOCK
+                        },
+                    )
+                }
+            }
             val appPauseOnOpenPrompts = buildMap<String, Int> {
                 for (definition in appDefinitions) {
                     put(
@@ -787,6 +800,7 @@ open class MainActivity : FlutterFragmentActivity() {
                     "bypasses" to countBypassEvents(dayEvents),
                     "reelsBlocks" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK),
                     "shortsBlocks" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK),
+                    "spotlightBlocks" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_SPOTLIGHT_BLOCK),
                     "websiteBlocks" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK),
                     "pauseOnOpenPrompts" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT),
                     "dailyLimitHits" to byType.getValue(AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT),
@@ -802,6 +816,7 @@ open class MainActivity : FlutterFragmentActivity() {
                     "appLongestSessionMinutes" to appLongestSessionMinutes,
                     "appReelsBlocks" to appReelsBlocks,
                     "appShortsBlocks" to appShortsBlocks,
+                    "appSpotlightBlocks" to appSpotlightBlocks,
                     "appPauseOnOpenPrompts" to appPauseOnOpenPrompts,
                     "appDailyLimitHits" to appDailyLimitHits,
                     "appBypasses" to appBypasses,
@@ -909,6 +924,7 @@ open class MainActivity : FlutterFragmentActivity() {
                 "longestSessionMinutes30d" to longestSessionMinutes30d,
                 "reelsBlocks" to appEvents.count { it.type == AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK },
                 "shortsBlocks" to appEvents.count { it.type == AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK },
+                "spotlightBlocks" to appEvents.count { it.type == AppGuardAccessibilityService.STATS_EVENT_SPOTLIGHT_BLOCK },
                 "pauseOnOpenPrompts" to appEvents.count { it.type == AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT },
                 "dailyLimitHits" to appEvents.count { it.type == AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT },
                 "bypasses" to appEvents.count { event ->
@@ -946,6 +962,7 @@ open class MainActivity : FlutterFragmentActivity() {
             "protection" to mapOf(
                 "reelsBlocks" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK),
                 "shortsBlocks" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK),
+                "spotlightBlocks" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_SPOTLIGHT_BLOCK),
                 "websiteBlocks" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK),
                 "pauseOnOpenPrompts" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT),
                 "dailyLimitHits" to eventTypeCounts.getValue(AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT),
@@ -1548,6 +1565,7 @@ open class MainActivity : FlutterFragmentActivity() {
         val counts = mutableMapOf(
             AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK to 0,
             AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK to 0,
+            AppGuardAccessibilityService.STATS_EVENT_SPOTLIGHT_BLOCK to 0,
             AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK to 0,
             AppGuardAccessibilityService.STATS_EVENT_PAUSE_ON_OPEN_PROMPT to 0,
             AppGuardAccessibilityService.STATS_EVENT_DAILY_LIMIT_HIT to 0,
@@ -1566,6 +1584,7 @@ open class MainActivity : FlutterFragmentActivity() {
         return events.count { event ->
             event.type == AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK ||
                 event.type == AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK ||
+                event.type == AppGuardAccessibilityService.STATS_EVENT_SPOTLIGHT_BLOCK ||
                 event.type == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK
         }
     }
@@ -1582,6 +1601,7 @@ open class MainActivity : FlutterFragmentActivity() {
     private fun isBlockEventType(eventType: String): Boolean {
         return eventType == AppGuardAccessibilityService.STATS_EVENT_REELS_BLOCK ||
             eventType == AppGuardAccessibilityService.STATS_EVENT_SHORTS_BLOCK ||
+            eventType == AppGuardAccessibilityService.STATS_EVENT_SPOTLIGHT_BLOCK ||
             eventType == AppGuardAccessibilityService.STATS_EVENT_WEBSITE_BLOCK
     }
 
@@ -1660,10 +1680,13 @@ open class MainActivity : FlutterFragmentActivity() {
                     "com.google.android.youtube"
                 id == "instagram" && packageNames.contains("com.instagram.android") ->
                     "com.instagram.android"
+                id == "snapchat" && packageNames.contains("com.snapchat.android") ->
+                    "com.snapchat.android"
                 else -> packageNames.firstOrNull().orEmpty()
             }
             val appName = when (id) {
                 "instagram" -> "Instagram"
+                "snapchat" -> "Snapchat"
                 "youtube" -> "YouTube"
                 else -> (apps.firstOrNull()?.get("appName") as? String).orEmpty()
             }
@@ -1686,6 +1709,9 @@ open class MainActivity : FlutterFragmentActivity() {
         }
         if (packageLower == "com.instagram.android") {
             return "instagram"
+        }
+        if (packageLower == "com.snapchat.android") {
+            return "snapchat"
         }
         return packageName
     }
@@ -2206,6 +2232,10 @@ open class MainActivity : FlutterFragmentActivity() {
         AppLimit(
             settingKey = "instagram_app",
             packageNames = setOf("com.instagram.android"),
+        ),
+        AppLimit(
+            settingKey = "snapchat_app",
+            packageNames = setOf("com.snapchat.android"),
         ),
         AppLimit(
             settingKey = "youtube_app",
