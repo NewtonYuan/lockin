@@ -13,6 +13,9 @@ class PremiumService extends ChangeNotifier {
   static const freeTrialOfferId = '3-day-free-trial';
   static const _cachedPremiumKey = 'premium_cached_active_v1';
   static const _cachedProductIdKey = 'premium_cached_product_id_v1';
+  static const _localPremiumUnlockedKey = 'premium_local_unlocked_v1';
+  static const localPremiumCode = 'TEMPUS-FOREVER';
+  static const localPremiumDisableCode = 'TEMPUS-FREE';
 
   final InAppPurchase _inAppPurchase = InAppPurchase.instance;
   StreamSubscription<List<PurchaseDetails>>? _purchaseSubscription;
@@ -23,6 +26,7 @@ class PremiumService extends ChangeNotifier {
   bool _isCheckingStatus = false;
   bool _isPurchasePending = false;
   bool _isPremium = false;
+  bool _isLocallyUnlocked = false;
   String? _activeProductId;
   String? _pendingOfferToken;
   String? _errorMessage;
@@ -38,7 +42,7 @@ class PremiumService extends ChangeNotifier {
   bool get isLoadingProducts => _isLoadingProducts;
   bool get isCheckingStatus => _isCheckingStatus;
   bool get isPurchasePending => _isPurchasePending;
-  bool get isPremium => _isPremium;
+  bool get isPremium => _isLocallyUnlocked || _isPremium;
   String? get activeProductId => _activeProductId;
   String? get errorMessage => _errorMessage;
   String? get lastStoreMessage => _lastStoreMessage;
@@ -56,10 +60,10 @@ class PremiumService extends ChangeNotifier {
   }
 
   String get statusLabel {
-    if (_isCheckingStatus && !_isPremium) {
+    if (_isCheckingStatus && !isPremium) {
       return 'Checking';
     }
-    return _isPremium ? 'Premium' : 'Free';
+    return isPremium ? 'Premium' : 'Free';
   }
 
   Future<void> initialize() async {
@@ -75,6 +79,7 @@ class PremiumService extends ChangeNotifier {
     );
     final prefs = await SharedPreferences.getInstance();
     _isPremium = prefs.getBool(_cachedPremiumKey) ?? false;
+    _isLocallyUnlocked = prefs.getBool(_localPremiumUnlockedKey) ?? false;
     _activeProductId = prefs.getString(_cachedProductIdKey);
     _isStoreAvailable = await _inAppPurchase.isAvailable();
     _isInitialized = true;
@@ -84,6 +89,13 @@ class PremiumService extends ChangeNotifier {
 
   Future<void> refreshStatus() async {
     await initialize();
+    if (_isLocallyUnlocked) {
+      _isCheckingStatus = false;
+      _errorMessage = null;
+      _lastStoreMessage = null;
+      notifyListeners();
+      return;
+    }
     if (!_isStoreAvailable) return;
 
     _isCheckingStatus = true;
@@ -111,6 +123,7 @@ class PremiumService extends ChangeNotifier {
 
   Future<void> loadProducts() async {
     await initialize();
+    if (_isLocallyUnlocked) return;
     if (!_isStoreAvailable || _isLoadingProducts) return;
 
     _isLoadingProducts = true;
@@ -199,6 +212,7 @@ class PremiumService extends ChangeNotifier {
 
   Future<void> restorePurchases() async {
     await initialize();
+    if (_isLocallyUnlocked) return;
     if (!_isStoreAvailable) return;
 
     _isPurchasePending = true;
@@ -228,6 +242,29 @@ class PremiumService extends ChangeNotifier {
       default:
         return productDetails.title;
     }
+  }
+
+  Future<bool> redeemLocalCode(String code) async {
+    final normalizedCode = code.trim().toUpperCase();
+    if (normalizedCode == localPremiumCode) {
+      _isLocallyUnlocked = true;
+      _errorMessage = null;
+      _lastStoreMessage = null;
+      await _persistLocalPremiumUnlock();
+      notifyListeners();
+      return true;
+    }
+
+    if (normalizedCode == localPremiumDisableCode) {
+      _isLocallyUnlocked = false;
+      _errorMessage = null;
+      _lastStoreMessage = null;
+      await _persistLocalPremiumUnlock();
+      notifyListeners();
+      return true;
+    }
+
+    return false;
   }
 
   Future<List<PurchaseDetails>> _queryCurrentPurchases() async {
@@ -291,11 +328,17 @@ class PremiumService extends ChangeNotifier {
   Future<void> _persistPremiumCache() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_cachedPremiumKey, _isPremium);
+    await _persistLocalPremiumUnlock(prefs);
     if (_activeProductId == null) {
       await prefs.remove(_cachedProductIdKey);
     } else {
       await prefs.setString(_cachedProductIdKey, _activeProductId!);
     }
+  }
+
+  Future<void> _persistLocalPremiumUnlock([SharedPreferences? prefs]) async {
+    final resolvedPrefs = prefs ?? await SharedPreferences.getInstance();
+    await resolvedPrefs.setBool(_localPremiumUnlockedKey, _isLocallyUnlocked);
   }
 
   int _basePlanSortRank(String? basePlanId) {

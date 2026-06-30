@@ -453,6 +453,7 @@ class StatisticsTab extends StatefulWidget {
     required this.statistics,
     required this.installedApps,
     required this.isLoading,
+    required this.loadErrorMessage,
     required this.isPremium,
     required this.onOpenPremium,
     required this.isUsageAccessAllowed,
@@ -464,6 +465,7 @@ class StatisticsTab extends StatefulWidget {
   final StatisticsSnapshot? statistics;
   final List<CustomTrackedApp> installedApps;
   final bool isLoading;
+  final String? loadErrorMessage;
   final bool isPremium;
   final VoidCallback onOpenPremium;
   final bool isUsageAccessAllowed;
@@ -682,6 +684,41 @@ class StatisticsTabState extends State<StatisticsTab> {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
+                if (widget.loadErrorMessage != null) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF7E2D9),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.error_outline_rounded,
+                          color: Color(0xFFC65A43),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            widget.loadErrorMessage!,
+                            style: const TextStyle(
+                              color: appText,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        TextButton(
+                          onPressed: widget.onRefresh,
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 Row(
                   children: [
                     Expanded(

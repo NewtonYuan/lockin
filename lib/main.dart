@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -48,7 +50,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const _accessibilityChannel = MethodChannel('tempus/accessibility');
   static const _navFadeDuration = Duration(milliseconds: 150);
   static const _statisticsHistoryStore = StatisticsHistoryStore();
-  static const _playRedeemUrl = 'https://play.google.com/redeem';
+  static const _playSubscriptionsUrl =
+      'https://play.google.com/store/account/subscriptions?sku=tempus_premium&package=com.prestige.tempus';
 
   int _selectedIndex = 0;
   late final PageController _pageController;
@@ -72,6 +75,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   StatisticsSnapshot? _statisticsSnapshot;
   bool _isStatisticsLoading = false;
   bool _statisticsNeedsRefresh = true;
+  bool _statisticsRefreshQueued = false;
+  String? _statisticsLoadErrorMessage;
   String? _lastPremiumErrorMessage;
   final Map<String, ScrollDayStatus> _scrollDayStatuses = {};
   Set<String>? _installedTrackedPackages;
@@ -102,6 +107,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _pageController = PageController();
     WidgetsBinding.instance.addObserver(this);
     _premiumService.addListener(_handlePremiumStateChanged);
+    unawaited(_premiumService.initialize());
     _refreshAccessibilityStatus();
     _refreshUsageAccessStatus();
     _loadOnboardingState();
@@ -448,6 +454,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           builder: (context, _) {
             return _PremiumSheet(
               premiumService: _premiumService,
+              onManageSubscription: () => _openWebsite(_playSubscriptionsUrl),
             );
           },
         );
@@ -458,13 +465,38 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _openRedeemCode() async {
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
         return _RedeemCodeSheet(
-          onOpenRedeem: () => _openWebsite(_playRedeemUrl),
+          onRedeemCode: (code) async {
+            final didUnlock = await _premiumService.redeemLocalCode(code);
+            if (!mounted) return didUnlock;
+            Navigator.of(this.context).pop();
+            final normalizedCode = code.trim().toUpperCase();
+            ScaffoldMessenger.of(this.context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(
+                  content: Text(
+                    didUnlock
+                        ? normalizedCode ==
+                                  PremiumService.localPremiumDisableCode
+                              ? 'Premium removed on this device.'
+                              : 'Premium unlocked on this device.'
+                        : 'That code is invalid.',
+                  ),
+                ),
+              );
+            return didUnlock;
+          },
         );
       },
     );
+  }
+
+  Future<void> _openPremiumStatus() async {
+    await _openPremiumSheet();
   }
 
   Future<void> _loadStatisticsTabData({bool force = false}) async {
@@ -474,32 +506,43 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _isStatisticsLoading = false;
         });
       }
+      _statisticsRefreshQueued = false;
       return;
     }
 
-    if (_isStatisticsLoading) return;
+    if (_isStatisticsLoading) {
+      _statisticsRefreshQueued = true;
+      return;
+    }
     if (!force && !_statisticsNeedsRefresh && _statisticsSnapshot != null) {
       return;
     }
 
     setState(() {
       _isStatisticsLoading = true;
+      _statisticsLoadErrorMessage = null;
     });
+
+    StatisticsSnapshot? storedSnapshot;
+    var installedApps = _installedApps;
 
     try {
       final storedSnapshotFuture = _statisticsHistoryStore.loadSnapshot();
-      final installedAppsFuture = _requestInstalledApps();
+      final installedAppsFuture = _requestInstalledApps().timeout(
+        const Duration(seconds: 10),
+      );
       final statisticsDataFuture = _accessibilityChannel
-          .invokeMapMethod<String, dynamic>('getStatisticsData');
+          .invokeMapMethod<String, dynamic>('getStatisticsData')
+          .timeout(const Duration(seconds: 15));
 
-      final storedSnapshot = await storedSnapshotFuture;
+      storedSnapshot = await storedSnapshotFuture;
       if (mounted && storedSnapshot != null && _statisticsSnapshot == null) {
         setState(() {
           _statisticsSnapshot = storedSnapshot;
         });
       }
 
-      final installedApps = await installedAppsFuture;
+      installedApps = await installedAppsFuture;
       final statisticsData = await statisticsDataFuture;
       if (!mounted) return;
 
@@ -508,7 +551,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           : StatisticsSnapshot.fromMap(statisticsData);
       final resolvedStatisticsSnapshot = nativeStatisticsSnapshot == null
           ? (storedSnapshot ?? _statisticsSnapshot)
-          : await _statisticsHistoryStore.mergeAndSave(nativeStatisticsSnapshot);
+          : await _statisticsHistoryStore.mergeAndSave(
+              nativeStatisticsSnapshot,
+            );
       if (!mounted) return;
 
       setState(() {
@@ -516,21 +561,69 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _statisticsSnapshot = resolvedStatisticsSnapshot;
         _statisticsNeedsRefresh = false;
         _isStatisticsLoading = false;
+        _statisticsLoadErrorMessage = null;
+      });
+    } on TimeoutException {
+      final fallbackSnapshot =
+          storedSnapshot ?? await _statisticsHistoryStore.loadSnapshot();
+      if (!mounted) return;
+      setState(() {
+        _installedApps = installedApps;
+        _statisticsSnapshot = fallbackSnapshot ?? _statisticsSnapshot;
+        _isStatisticsLoading = false;
+        _statisticsLoadErrorMessage =
+            'Statistics took too long to load. Showing saved data.';
       });
     } on PlatformException {
-      final storedSnapshot = await _statisticsHistoryStore.loadSnapshot();
+      final fallbackSnapshot =
+          storedSnapshot ?? await _statisticsHistoryStore.loadSnapshot();
       if (!mounted) return;
       setState(() {
-        _statisticsSnapshot = storedSnapshot ?? _statisticsSnapshot;
+        _installedApps = installedApps;
+        _statisticsSnapshot = fallbackSnapshot ?? _statisticsSnapshot;
         _isStatisticsLoading = false;
+        _statisticsLoadErrorMessage =
+            'Statistics could not be refreshed right now. Showing saved data.';
       });
     } on MissingPluginException {
-      final storedSnapshot = await _statisticsHistoryStore.loadSnapshot();
+      final fallbackSnapshot =
+          storedSnapshot ?? await _statisticsHistoryStore.loadSnapshot();
       if (!mounted) return;
       setState(() {
-        _statisticsSnapshot = storedSnapshot ?? _statisticsSnapshot;
+        _installedApps = installedApps;
+        _statisticsSnapshot = fallbackSnapshot ?? _statisticsSnapshot;
         _isStatisticsLoading = false;
+        _statisticsLoadErrorMessage =
+            'Statistics are unavailable on this device right now.';
       });
+    } catch (_) {
+      final fallbackSnapshot =
+          storedSnapshot ?? await _statisticsHistoryStore.loadSnapshot();
+      if (!mounted) return;
+      setState(() {
+        _installedApps = installedApps;
+        _statisticsSnapshot = fallbackSnapshot ?? _statisticsSnapshot;
+        _isStatisticsLoading = false;
+        _statisticsLoadErrorMessage =
+            'Statistics hit an unexpected error. Showing saved data.';
+      });
+    } finally {
+      if (_statisticsRefreshQueued &&
+          mounted &&
+          _isUsageAccessEnabled == true) {
+        _statisticsRefreshQueued = false;
+        _statisticsNeedsRefresh = true;
+        scheduleMicrotask(() {
+          _loadStatisticsTabData(force: true);
+        });
+      }
+    }
+  }
+
+  void _markStatisticsDirty() {
+    _statisticsNeedsRefresh = true;
+    if (_isStatisticsLoading) {
+      _statisticsRefreshQueued = true;
     }
   }
 
@@ -660,7 +753,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         }
       });
       _refreshHomeUsage();
-      _statisticsNeedsRefresh = true;
+      _markStatisticsDirty();
     } on PlatformException {
       // Android-only persistence. Other platforms use in-memory defaults.
     } on MissingPluginException {
@@ -674,6 +767,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         'settingKey': settingKey,
         'minutes': minutes,
       });
+      _markStatisticsDirty();
     } on PlatformException {
       // Android-only enforcement. Other platforms keep local UI state only.
     } on MissingPluginException {
@@ -687,6 +781,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         'settingKey': settingKey,
         'value': value,
       });
+      _markStatisticsDirty();
     } on PlatformException {
       // Android-only enforcement. Other platforms keep local UI state only.
     } on MissingPluginException {
@@ -706,6 +801,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             )
             .toList(),
       });
+      _markStatisticsDirty();
     } on PlatformException {
       // Android-only persistence. Other platforms keep local UI state only.
     } on MissingPluginException {
@@ -1401,6 +1497,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         statistics: _statisticsSnapshot,
         installedApps: _installedApps,
         isLoading: _isStatisticsLoading,
+        loadErrorMessage: _statisticsLoadErrorMessage,
         isPremium: _premiumService.isPremium,
         onOpenPremium: _openPremiumSheet,
         isUsageAccessAllowed: _isUsageAccessEnabled == true,
@@ -1411,7 +1508,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _fadeToTab(0);
         },
         premiumStatusLabel: _premiumService.statusLabel,
-        onOpenPremiumStatus: _openPremiumSheet,
+        onOpenPremiumStatus: _openPremiumStatus,
         onEnterCode: _openRedeemCode,
         onOpenAccessibilitySettings: _requestAccessibilityAccess,
         onOpenUsageAccessSettings: _requestUsageAccess,
@@ -1709,9 +1806,11 @@ class _PermissionDisclosureSheet extends StatelessWidget {
 class _PremiumSheet extends StatelessWidget {
   const _PremiumSheet({
     required this.premiumService,
+    required this.onManageSubscription,
   });
 
   final PremiumService premiumService;
+  final VoidCallback onManageSubscription;
 
   @override
   Widget build(BuildContext context) {
@@ -1772,50 +1871,47 @@ class _PremiumSheet extends StatelessWidget {
                       ),
                     ],
                   ),
-                  if (premiumService.isPremium) ...[
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFEDF8F0),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: const Text(
-                        'Premium',
-                        style: TextStyle(
-                          color: Color(0xFF2F7D44),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
                 ],
               ),
               const SizedBox(height: 10),
-              const Center(
-                child: Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(
-                        text: 'A few dollars to save hours every day.\n',
+              Center(
+                child: premiumService.isPremium
+                    ? const Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(text: 'Your premium account is '),
+                            TextSpan(
+                              text: 'Active',
+                              style: TextStyle(color: brand),
+                            ),
+                          ],
+                        ),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: appMutedText,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
+                    : const Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(
+                              text: 'A few dollars to save hours every day.\n',
+                            ),
+                            TextSpan(
+                              text: 'Your call.',
+                              style: TextStyle(color: brand),
+                            ),
+                          ],
+                        ),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: appMutedText,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                      TextSpan(
-                        text: 'Your call.',
-                        style: TextStyle(color: brand),
-                      ),
-                    ],
-                  ),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: appMutedText,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
               ),
               const SizedBox(height: 16),
               Container(
@@ -1830,23 +1926,32 @@ class _PremiumSheet extends StatelessWidget {
                     children: [
                       _PremiumFeatureLine(label: 'Allow Reels from DMs'),
                       SizedBox(height: 8),
-                      _PremiumFeatureLine(
-                        label: 'Unlimited App Guards',
-                      ),
+                      _PremiumFeatureLine(label: 'Unlimited App Guards'),
                       SizedBox(height: 8),
-                      _PremiumFeatureLine(
-                        label: 'Advanced Statistics',
-                      ),
+                      _PremiumFeatureLine(label: 'Advanced Statistics'),
                       SizedBox(height: 8),
-                      _PremiumFeatureLine(
-                        label: 'Unlocked premium features',
-                      ),
+                      _PremiumFeatureLine(label: 'Unlocked premium features'),
                     ],
                   ),
                 ),
               ),
               const SizedBox(height: 16),
-              if (!premiumService.isStoreAvailable)
+              if (premiumService.isPremium)
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: onManageSubscription,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: brand,
+                      minimumSize: const Size.fromHeight(52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('Manage Subscription'),
+                  ),
+                )
+              else if (!premiumService.isStoreAvailable)
                 const Text(
                   'Google Play billing is unavailable on this device right now.',
                   style: TextStyle(
@@ -1870,7 +1975,11 @@ class _PremiumSheet extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    for (var i = 0; i < premiumService.products.length; i++) ...[
+                    for (
+                      var i = 0;
+                      i < premiumService.products.length;
+                      i++
+                    ) ...[
                       Expanded(
                         child: _PremiumPlanButton(
                           title: premiumService.labelForProduct(
@@ -1889,9 +1998,8 @@ class _PremiumSheet extends StatelessWidget {
                           isLoading: premiumService.isPurchasePendingFor(
                             premiumService.products[i],
                           ),
-                          onTap: () => premiumService.buy(
-                            premiumService.products[i],
-                          ),
+                          onTap: () =>
+                              premiumService.buy(premiumService.products[i]),
                         ),
                       ),
                       if (i != premiumService.products.length - 1)
@@ -2085,14 +2193,54 @@ class _PremiumPlanButton extends StatelessWidget {
   }
 }
 
-class _RedeemCodeSheet extends StatelessWidget {
-  const _RedeemCodeSheet({required this.onOpenRedeem});
+class _RedeemCodeSheet extends StatefulWidget {
+  const _RedeemCodeSheet({required this.onRedeemCode});
 
-  final VoidCallback onOpenRedeem;
+  final Future<bool> Function(String code) onRedeemCode;
+
+  @override
+  State<_RedeemCodeSheet> createState() => _RedeemCodeSheetState();
+}
+
+class _RedeemCodeSheetState extends State<_RedeemCodeSheet> {
+  final TextEditingController _controller = TextEditingController();
+  bool _isSubmitting = false;
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final code = _controller.text.trim();
+    if (code.isEmpty) {
+      setState(() {
+        _errorText = 'Enter a code.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _errorText = null;
+    });
+
+    final didUnlock = await widget.onRedeemCode(code);
+    if (!mounted || didUnlock) return;
+
+    setState(() {
+      _isSubmitting = false;
+      _errorText = 'Invalid code.';
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final bottomPadding = MediaQuery.paddingOf(context).bottom;
+    final bottomPadding =
+        MediaQuery.viewInsetsOf(context).bottom +
+        MediaQuery.paddingOf(context).bottom;
     return SafeArea(
       top: false,
       child: Container(
@@ -2114,20 +2262,42 @@ class _RedeemCodeSheet extends StatelessWidget {
                   fontWeight: FontWeight.w800,
                 ),
               ),
-              const SizedBox(height: 10),
-              const Text(
-                'Promo codes are redeemed through Google Play and applied to the current Play account.',
-                style: TextStyle(
-                  color: appMutedText,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
+              const SizedBox(height: 18),
+              TextField(
+                controller: _controller,
+                enabled: !_isSubmitting,
+                textCapitalization: TextCapitalization.characters,
+                autocorrect: false,
+                enableSuggestions: false,
+                onSubmitted: (_) => _submit(),
+                decoration: InputDecoration(
+                  hintText: 'Enter code',
+                  errorText: _errorText,
+                  filled: true,
+                  fillColor: appSurface,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 14,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: appBorder),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: appBorder),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: brand, width: 1.4),
+                  ),
                 ),
               ),
               const SizedBox(height: 18),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: onOpenRedeem,
+                  onPressed: _isSubmitting ? null : _submit,
                   style: FilledButton.styleFrom(
                     backgroundColor: brand,
                     minimumSize: const Size.fromHeight(50),
@@ -2135,7 +2305,16 @@ class _RedeemCodeSheet extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text('Open Google Play Redeem'),
+                  child: _isSubmitting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Unlock Premium'),
                 ),
               ),
             ],

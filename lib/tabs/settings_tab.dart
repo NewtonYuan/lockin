@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import '../brand.dart';
 import 'sticky_header.dart';
@@ -59,6 +60,7 @@ class SettingsTab extends StatelessWidget {
                     icon: Icons.account_circle_outlined,
                     title: 'Status',
                     value: premiumStatusLabel,
+                    showPremiumCrown: premiumStatusLabel == 'Premium',
                     onTap: onOpenPremiumStatus,
                   ),
                   _SettingsRow(
@@ -183,6 +185,7 @@ class _SettingsRow extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.value,
+    this.showPremiumCrown = false,
     this.onTap,
     this.showChevron = true,
   });
@@ -190,12 +193,21 @@ class _SettingsRow extends StatelessWidget {
   final IconData icon;
   final String title;
   final String value;
+  final bool showPremiumCrown;
   final VoidCallback? onTap;
   final bool showChevron;
   static const double _rowHeight = 56;
 
   @override
   Widget build(BuildContext context) {
+    final hasTrailingValue = value.isNotEmpty || showPremiumCrown;
+    final trailingWidth = switch ((showChevron, hasTrailingValue)) {
+      (true, true) => 120.0,
+      (true, false) => 20.0,
+      (false, true) => 136.0,
+      (false, false) => 0.0,
+    };
+
     return InkWell(
       onTap: onTap,
       splashColor: brand.withValues(alpha: 0.14),
@@ -212,7 +224,7 @@ class _SettingsRow extends StatelessWidget {
                 child: Text(
                   title,
                   maxLines: 1,
-                  overflow: TextOverflow.visible,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                     color: appText,
                     fontWeight: FontWeight.w600,
@@ -221,24 +233,45 @@ class _SettingsRow extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               SizedBox(
-                width: showChevron ? 88 : 104,
+                width: trailingWidth,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    Flexible(
-                      child: Text(
-                        value,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.right,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: appMutedText,
-                          fontWeight: FontWeight.w700,
+                    if (hasTrailingValue)
+                      Expanded(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            if (showPremiumCrown) ...[
+                              SvgPicture.asset(
+                                'assets/icons/crown.svg',
+                                width: 16,
+                                height: 16,
+                                colorFilter: const ColorFilter.mode(
+                                  premiumGold,
+                                  BlendMode.srcIn,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                            ],
+                            Flexible(
+                              child: Text(
+                                value,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.right,
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(
+                                      color: appMutedText,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
                     if (showChevron) ...[
-                      const SizedBox(width: 4),
+                      if (hasTrailingValue) const SizedBox(width: 4),
                       const Icon(
                         Icons.chevron_right_rounded,
                         color: appMutedText,
