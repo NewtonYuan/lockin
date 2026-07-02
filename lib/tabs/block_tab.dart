@@ -92,7 +92,9 @@ class BlockScreen extends StatelessWidget {
     required this.isPremium,
     required this.onOpenPremium,
     required this.isAccessibilityAllowed,
+    required this.isOverlayPermissionAllowed,
     required this.onOpenAccessibilitySettings,
+    required this.onOpenOverlayPermissionSettings,
   });
 
   final VoidCallback onBackToHome;
@@ -117,7 +119,9 @@ class BlockScreen extends StatelessWidget {
   final bool isPremium;
   final VoidCallback onOpenPremium;
   final bool isAccessibilityAllowed;
+  final bool isOverlayPermissionAllowed;
   final VoidCallback onOpenAccessibilitySettings;
+  final VoidCallback onOpenOverlayPermissionSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -251,12 +255,21 @@ class BlockScreen extends StatelessWidget {
             label: 'Block Stories',
             value: blockSettings['instagram_explore'] ?? false,
           ),
+          _BlockItemData.toggle(
+            keyName: 'instagram_hide_explore_feed',
+            label: 'Hide Explore Feed',
+            value: blockSettings['instagram_hide_explore_feed'] ?? false,
+            isPremiumOnly: true,
+          ),
         ],
         onToggleExpanded: () => onToggleExpanded('Instagram'),
         onToggleSetting: onToggleSetting,
         onSelectTimeLimit: onSelectTimeLimit,
         isPremium: isPremium,
         onOpenPremium: onOpenPremium,
+        showExplorePermissionBanner:
+            isPremium && !isOverlayPermissionAllowed,
+        onOpenExplorePermissionSettings: onOpenOverlayPermissionSettings,
       ),
       const SizedBox(height: 8),
       _AppBlockCard(
@@ -690,6 +703,76 @@ class _AccessibilityErrorBanner extends StatelessWidget {
                 ),
                 const SizedBox(width: 2),
                 const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFFC65A43),
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OverlayPermissionErrorBanner extends StatelessWidget {
+  const _OverlayPermissionErrorBanner({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFFFF4F2),
+      borderRadius: BorderRadius.circular(8),
+      child: Ink(
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          splashColor: brand.withValues(alpha: 0.10),
+          highlightColor: appText.withValues(alpha: 0.03),
+          onTap: onTap,
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.layers_clear_rounded,
+                  color: Color(0xFFC65A43),
+                  size: 18,
+                ),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      style: TextStyle(
+                        color: Color(0xFFC65A43),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      children: [
+                        TextSpan(text: 'Requires '),
+                        TextSpan(
+                          text: 'Display Over Apps',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        TextSpan(text: ' permissions'),
+                      ],
+                    ),
+                  ),
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Fix',
+                  style: TextStyle(
+                    color: Color(0xFFC65A43),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                SizedBox(width: 2),
+                Icon(
                   Icons.chevron_right_rounded,
                   color: Color(0xFFC65A43),
                   size: 18,
@@ -1756,6 +1839,8 @@ class _AppBlockCard extends StatelessWidget {
     required this.onSelectTimeLimit,
     required this.isPremium,
     required this.onOpenPremium,
+    this.showExplorePermissionBanner = false,
+    this.onOpenExplorePermissionSettings,
     this.onActionPressed,
   });
 
@@ -1770,6 +1855,8 @@ class _AppBlockCard extends StatelessWidget {
   final void Function(String settingKey, int? minutes) onSelectTimeLimit;
   final bool isPremium;
   final VoidCallback onOpenPremium;
+  final bool showExplorePermissionBanner;
+  final VoidCallback? onOpenExplorePermissionSettings;
   final ValueChanged<String>? onActionPressed;
 
   static const double _headerMinHeight = 52;
@@ -1911,20 +1998,7 @@ class _AppBlockCard extends StatelessWidget {
                       padding: EdgeInsets.zero,
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
-                        children: items
-                            .map(
-                              (item) => _BlockItemRow(
-                                item: item,
-                                isPremium: isPremium,
-                                onOpenPremium: onOpenPremium,
-                                onToggleChanged: (value) =>
-                                    onToggleSetting(item.keyName, value),
-                                onTimeLimitSelected: (minutes) =>
-                                    onSelectTimeLimit(item.keyName, minutes),
-                                onActionPressed: onActionPressed,
-                              ),
-                            )
-                            .toList(),
+                        children: _buildItemChildren(),
                       ),
                     )
                   : const SizedBox.shrink(),
@@ -1933,6 +2007,40 @@ class _AppBlockCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  List<Widget> _buildItemChildren() {
+    final children = <Widget>[];
+    for (final item in items) {
+      children.add(
+        _BlockItemRow(
+          item: item,
+          isPremium: isPremium,
+          onOpenPremium: onOpenPremium,
+          onToggleChanged: (value) => onToggleSetting(item.keyName, value),
+          onTimeLimitSelected: (minutes) =>
+              onSelectTimeLimit(item.keyName, minutes),
+          onActionPressed: onActionPressed,
+        ),
+      );
+      if (_shouldShowExplorePermissionBannerFor(item)) {
+        children.add(
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+            child: _OverlayPermissionErrorBanner(
+              onTap: onOpenExplorePermissionSettings!,
+            ),
+          ),
+        );
+      }
+    }
+    return children;
+  }
+
+  bool _shouldShowExplorePermissionBannerFor(_BlockItemData item) {
+    return item.keyName == 'instagram_hide_explore_feed' &&
+        showExplorePermissionBanner &&
+        onOpenExplorePermissionSettings != null;
   }
 }
 

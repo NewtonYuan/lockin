@@ -107,6 +107,7 @@ open class MainActivity : FlutterFragmentActivity() {
         "instagram_reels",
         "instagram_reels_dms",
         "instagram_explore",
+        "instagram_hide_explore_feed",
         "snapchat_pause_on_open",
         "snapchat_spotlight",
         "youtube_pause_on_open",
@@ -163,8 +164,15 @@ open class MainActivity : FlutterFragmentActivity() {
                     openUsageAccessSettings()
                     result.success(null)
                 }
+                "openOverlayPermissionSettings" -> {
+                    openOverlayPermissionSettings()
+                    result.success(null)
+                }
                 "isAccessibilityServiceEnabled" -> {
                     result.success(isAccessibilityServiceEnabled())
+                }
+                "isOverlayPermissionEnabled" -> {
+                    result.success(isOverlayPermissionEnabled())
                 }
                 "consumeAccessibilityEnabledSuccess" -> {
                     result.success(consumeAccessibilityEnabledSuccess())
@@ -539,6 +547,21 @@ open class MainActivity : FlutterFragmentActivity() {
             packageName,
         )
         return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun isOverlayPermissionEnabled(): Boolean {
+        return Settings.canDrawOverlays(this)
+    }
+
+    private fun openOverlayPermissionSettings() {
+        startActivity(
+            Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName"),
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+        )
     }
 
     private fun getTodayUsageStats(): List<Map<String, Any>> {

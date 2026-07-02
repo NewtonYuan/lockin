@@ -61,6 +61,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   double _pageOpacity = 1;
   bool _isFadingBetweenTabs = false;
   bool? _isAccessibilityEnabled;
+  bool? _isOverlayPermissionEnabled;
   bool? _isUsageAccessEnabled;
   bool _bypassAccessibilityGate = false;
   bool _skippedAccessibilityOnboarding = false;
@@ -96,6 +97,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     'instagram_reels': false,
     'instagram_reels_dms': false,
     'instagram_explore': false,
+    'instagram_hide_explore_feed': false,
     'snapchat_pause_on_open': false,
     'snapchat_spotlight': false,
     'youtube_pause_on_open': false,
@@ -112,6 +114,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _premiumService.addListener(_handlePremiumStateChanged);
     unawaited(_premiumService.initialize());
     _refreshAccessibilityStatus();
+    _refreshOverlayPermissionStatus();
     _refreshUsageAccessStatus();
     _loadOnboardingState();
     _loadSavedBlockConfig();
@@ -150,6 +153,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _refreshAccessibilityStatus();
+      _refreshOverlayPermissionStatus();
       _refreshUsageAccessStatus();
       _refreshInstalledTrackedPackages();
       _refreshHomeUsage();
@@ -213,6 +217,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     try {
       await _accessibilityChannel.invokeMethod<void>(
         'openAccessibilitySettings',
+      );
+    } on PlatformException {
+      // Android-only setup. Other platforms can still render the app shell.
+    } on MissingPluginException {
+      // Android-only setup. Other platforms can still render the app shell.
+    }
+  }
+
+  Future<void> _openOverlayPermissionSettings() async {
+    try {
+      await _accessibilityChannel.invokeMethod<void>(
+        'openOverlayPermissionSettings',
       );
     } on PlatformException {
       // Android-only setup. Other platforms can still render the app shell.
@@ -291,6 +307,33 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (consented == true) {
       await _openUsageAccessSettings();
     }
+  }
+
+  Future<void> _requestOverlayPermission() async {
+    if (_isOverlayPermissionEnabled == true) {
+      await _openOverlayPermissionSettings();
+      return;
+    }
+
+    final consented = await _showOverlayPermissionDisclosureDialog();
+    if (consented == true) {
+      await _openOverlayPermissionSettings();
+    }
+  }
+
+  Future<bool?> _showOverlayPermissionDisclosureDialog() {
+    return showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: true,
+      enableDrag: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const _PermissionDisclosureSheet(
+        title: 'Allow Display Over Apps?',
+        description:
+            'Tempus uses Display Over Apps to hide the Instagram Explore feed with an on-screen overlay while keeping the top search UI accessible.',
+      ),
+    );
   }
 
   Future<bool?> _showUsageAccessDisclosureDialog() {
@@ -415,6 +458,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() {
         _isUsageAccessEnabled = false;
+      });
+    }
+  }
+
+  Future<void> _refreshOverlayPermissionStatus() async {
+    try {
+      final enabled = await _accessibilityChannel.invokeMethod<bool>(
+        'isOverlayPermissionEnabled',
+      );
+      if (!mounted) return;
+      setState(() {
+        _isOverlayPermissionEnabled = enabled ?? false;
+      });
+    } on PlatformException {
+      if (!mounted) return;
+      setState(() {
+        _isOverlayPermissionEnabled = false;
+      });
+    } on MissingPluginException {
+      if (!mounted) return;
+      setState(() {
+        _isOverlayPermissionEnabled = false;
       });
     }
   }
@@ -1468,6 +1533,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           });
         },
         onToggleSetting: (settingKey, value) {
+          if (settingKey == 'instagram_hide_explore_feed' &&
+              !_premiumService.isPremium) {
+            _openPremiumSheet();
+            return;
+          }
           setState(() {
             _blockSettings[settingKey] = value;
           });
@@ -1489,7 +1559,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         isPremium: _premiumService.isPremium,
         onOpenPremium: _openPremiumSheet,
         isAccessibilityAllowed: _isAccessibilityEnabled == true,
+        isOverlayPermissionAllowed: _isOverlayPermissionEnabled == true,
         onOpenAccessibilitySettings: _requestAccessibilityAccess,
+        onOpenOverlayPermissionSettings: _requestOverlayPermission,
       ),
       StatisticsTab(
         key: _statisticsTabKey,
@@ -1514,6 +1586,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         onOpenPremiumStatus: _openPremiumStatus,
         onEnterCode: _openRedeemCode,
         onOpenAccessibilitySettings: _requestAccessibilityAccess,
+        onOpenOverlayPermissionSettings: _requestOverlayPermission,
         onOpenUsageAccessSettings: _requestUsageAccess,
         onShareApp: () {
           _shareText(
@@ -1535,6 +1608,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _openWebsite('https://dashing-profiterole-4c88c4.netlify.app/');
         },
         isAccessibilityAllowed: _isAccessibilityEnabled == true,
+        isOverlayPermissionAllowed: _isOverlayPermissionEnabled == true,
         isUsageAccessAllowed: _isUsageAccessEnabled == true,
       ),
     ];

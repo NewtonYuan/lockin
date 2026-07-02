@@ -12,12 +12,14 @@ class SettingsTab extends StatelessWidget {
     required this.onOpenPremiumStatus,
     required this.onEnterCode,
     required this.onOpenAccessibilitySettings,
+    required this.onOpenOverlayPermissionSettings,
     required this.onOpenUsageAccessSettings,
     required this.onShareApp,
     required this.onLeaveReview,
     required this.onSendFeedback,
     required this.onOpenPrivacyPolicy,
     required this.isAccessibilityAllowed,
+    required this.isOverlayPermissionAllowed,
     required this.isUsageAccessAllowed,
   });
 
@@ -26,12 +28,14 @@ class SettingsTab extends StatelessWidget {
   final VoidCallback onOpenPremiumStatus;
   final VoidCallback onEnterCode;
   final VoidCallback onOpenAccessibilitySettings;
+  final VoidCallback onOpenOverlayPermissionSettings;
   final VoidCallback onOpenUsageAccessSettings;
   final VoidCallback onShareApp;
   final VoidCallback onLeaveReview;
   final VoidCallback onSendFeedback;
   final VoidCallback onOpenPrivacyPolicy;
   final bool isAccessibilityAllowed;
+  final bool isOverlayPermissionAllowed;
   final bool isUsageAccessAllowed;
 
   @override
@@ -80,6 +84,12 @@ class SettingsTab extends StatelessWidget {
                     title: 'Accessibility',
                     value: isAccessibilityAllowed ? 'Allowed' : 'Denied',
                     onTap: onOpenAccessibilitySettings,
+                  ),
+                  _SettingsRow(
+                    icon: Icons.picture_in_picture_alt_rounded,
+                    title: 'Display Over Apps',
+                    value: isOverlayPermissionAllowed ? 'Allowed' : 'Denied',
+                    onTap: onOpenOverlayPermissionSettings,
                   ),
                   _SettingsRow(
                     icon: Icons.query_stats_rounded,
@@ -150,6 +160,7 @@ class _SettingsGroup extends StatelessWidget {
             title,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: appMutedText,
+              fontSize: 12,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -196,27 +207,22 @@ class _SettingsRow extends StatelessWidget {
   final bool showPremiumCrown;
   final VoidCallback? onTap;
   final bool showChevron;
-  static const double _rowHeight = 56;
+  static const double _minRowHeight = 56;
 
   @override
   Widget build(BuildContext context) {
     final hasTrailingValue = value.isNotEmpty || showPremiumCrown;
-    final trailingWidth = switch ((showChevron, hasTrailingValue)) {
-      (true, true) => 120.0,
-      (true, false) => 20.0,
-      (false, true) => 136.0,
-      (false, false) => 0.0,
-    };
 
     return InkWell(
       onTap: onTap,
       splashColor: brand.withValues(alpha: 0.14),
       highlightColor: appText.withValues(alpha: 0.04),
-      child: SizedBox(
-        height: _rowHeight,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: _minRowHeight),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Icon(icon, color: appMutedText, size: 24),
               const SizedBox(width: 16),
@@ -227,59 +233,54 @@ class _SettingsRow extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                     color: appText,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
               const SizedBox(width: 12),
-              SizedBox(
-                width: trailingWidth,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    if (hasTrailingValue)
-                      Expanded(
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            if (showPremiumCrown) ...[
-                              SvgPicture.asset(
-                                'assets/icons/crown.svg',
-                                width: 16,
-                                height: 16,
-                                colorFilter: const ColorFilter.mode(
-                                  premiumGold,
-                                  BlendMode.srcIn,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                            ],
-                            Flexible(
-                              child: Text(
-                                value,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.right,
-                                style: Theme.of(context).textTheme.bodyMedium
-                                    ?.copyWith(
-                                      color: appMutedText,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (hasTrailingValue)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (showPremiumCrown) ...[
+                          SvgPicture.asset(
+                            'assets/icons/crown.svg',
+                            width: 16,
+                            height: 16,
+                            colorFilter: const ColorFilter.mode(
+                              premiumGold,
+                              BlendMode.srcIn,
                             ),
-                          ],
+                          ),
+                          const SizedBox(width: 4),
+                        ],
+                        Text(
+                          value,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.right,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: appMutedText,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
                         ),
-                      ),
-                    if (showChevron) ...[
-                      if (hasTrailingValue) const SizedBox(width: 4),
-                      const Icon(
-                        Icons.chevron_right_rounded,
-                        color: appMutedText,
-                        size: 20,
-                      ),
-                    ],
+                      ],
+                    ),
+                  if (showChevron) ...[
+                    if (hasTrailingValue) const SizedBox(width: 4),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      color: appMutedText,
+                      size: 20,
+                    ),
                   ],
-                ),
+                ],
               ),
             ],
           ),

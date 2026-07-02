@@ -7,13 +7,32 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import android.util.Log
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.StyleSpan
+import android.text.style.ForegroundColorSpan
+import android.graphics.Typeface
 import java.util.Calendar
 import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONArray
@@ -43,6 +62,17 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private var lastInstagramReelsScanAtMillis = 0L
     private var instagramReelsDetectedUntilMillis = 0L
     private var instagramAllowedDmReelFingerprint: String? = null
+    private var instagramExploreOverlayView: View? = null
+    private var instagramExploreOverlayRect: Rect? = null
+    private var lastInstagramExploreDetectionState: Boolean? = null
+    private var lastInstagramExploreDetectionReason: String? = null
+    private var instagramExplorePositiveHitCount = 0
+    private var instagramExploreMissCount = 0
+    private var instagramExploreMissStartedAtElapsedRealtime = 0L
+    private var instagramExploreRevalidationRunning = false
+    private val instagramExploreRevalidationRunnable = Runnable {
+        revalidateInstagramExploreFeedOverlay()
+    }
     private var lastYouTubeShortsScanAtMillis = 0L
     private var youTubeShortsDetectedUntilMillis = 0L
     private var lastSnapchatSpotlightScanAtMillis = 0L
@@ -60,12 +90,19 @@ class AppGuardAccessibilityService : AccessibilityService() {
         if (
             eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
-            eventType != AccessibilityEvent.TYPE_VIEW_CLICKED
+            eventType != AccessibilityEvent.TYPE_VIEW_CLICKED &&
+            eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED &&
+            eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED
         ) {
             return
         }
 
-        val packageName = event.packageName?.toString() ?: return
+        val rawPackageName = event.packageName?.toString() ?: return
+        val packageName = if (shouldIgnoreOverlayTransientPackage(rawPackageName)) {
+            lastForegroundPackage ?: rawPackageName
+        } else {
+            rawPackageName
+        }
         val previousPackageName = lastForegroundPackage
         val packageChanged = previousPackageName != packageName
         if (previousPackageName != null && previousPackageName != packageName) {
@@ -76,6 +113,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
             if (packageName != INSTAGRAM_PACKAGE_NAME) {
                 clearInstagramReelsDetectionCache()
                 clearInstagramDmAllowedReel()
+                dismissInstagramExploreFeedOverlay()
             }
             if (!isYouTubePackage(packageName)) {
                 clearYouTubeShortsDetectionCache()
@@ -90,6 +128,11 @@ class AppGuardAccessibilityService : AccessibilityService() {
             ) {
                 dismissPromptOverlay()
             }
+        }
+        if (packageName == INSTAGRAM_PACKAGE_NAME) {
+            refreshInstagramExploreFeedOverlay()
+        } else {
+            dismissInstagramExploreFeedOverlay()
         }
         if (isDailyLimitReached(packageName)) {
             if (System.currentTimeMillis() < promptSuppressedUntilMillis) {
@@ -147,6 +190,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         enforcementHandler.removeCallbacks(usageAccessEnableWatcher)
         enforcementHandler.removeCallbacksAndMessages(null)
         dismissPromptState()
+        dismissInstagramExploreFeedOverlay()
         super.onDestroy()
     }
 
@@ -184,6 +228,11 @@ class AppGuardAccessibilityService : AccessibilityService() {
     private fun isInstagramStoriesBlockingEnabled(): Boolean {
         return getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(INSTAGRAM_STORIES_SETTING_KEY, false)
+    }
+
+    private fun isInstagramExploreFeedHidingEnabled(): Boolean {
+        return getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(INSTAGRAM_HIDE_EXPLORE_FEED_SETTING_KEY, false)
     }
 
     private fun isInstagramReelsDmsAllowed(): Boolean {
@@ -418,6 +467,12 @@ class AppGuardAccessibilityService : AccessibilityService() {
         if (packageName == "com.android.systemui") return false
         if (sourcePackageName.isNullOrBlank()) return true
         return packageName != sourcePackageName
+    }
+
+    private fun shouldIgnoreOverlayTransientPackage(packageName: String): Boolean {
+        return packageName == this.packageName ||
+            packageName == "android" ||
+            packageName == "com.android.systemui"
     }
 
     private fun shouldOpenPauseOnOpenPrompt(
@@ -809,6 +864,365 @@ class AppGuardAccessibilityService : AccessibilityService() {
             .takeIf { it.isNotBlank() }
     }
 
+    private fun refreshInstagramExploreFeedOverlay() {
+        val exploreFeedHidingEnabled = isInstagramExploreFeedHidingEnabled()
+        if (!exploreFeedHidingEnabled) {
+            logInstagramExploreDetection(
+                detected = false,
+                reason = "setting_disabled",
+            )
+            resetInstagramExplorePositiveState()
+            dismissInstagramExploreFeedOverlay()
+            return
+        }
+
+        val rootNode = rootInActiveWindow ?: run {
+            handleInstagramExploreDetectionMiss("no_root_node")
+            return
+        }
+        if (isInstagramKnownNotExploreScreen(rootNode)) {
+            handleInstagramExploreDetectionMiss("known_not_explore_view")
+            return
+        }
+        val detection = findInstagramExploreFeedDetection(rootNode) ?: run {
+            handleInstagramExploreDetectionMiss("no_explore_rect")
+            return
+        }
+        if (instagramExploreOverlayView == null) {
+            instagramExplorePositiveHitCount += 1
+            if (instagramExplorePositiveHitCount < INSTAGRAM_EXPLORE_POSITIVE_HIT_THRESHOLD) {
+                logInstagramExploreLifecycle(
+                    "pending_show source=${detection.source} rect=${formatRectForLog(detection.rect)} hits=$instagramExplorePositiveHitCount",
+                )
+                scheduleInstagramExploreRevalidation(INSTAGRAM_EXPLORE_SHOW_CONFIRM_MILLIS)
+                return
+            }
+        }
+        resetInstagramExplorePositiveState()
+        resetInstagramExploreMissState()
+        scheduleInstagramExploreRevalidation(INSTAGRAM_EXPLORE_REVALIDATION_MILLIS)
+        logInstagramExploreDetection(
+            detected = true,
+            reason = "${detection.source}:${formatRectForLog(detection.rect)}",
+        )
+        logInstagramExploreLifecycle(
+            if (instagramExploreOverlayView == null) {
+                "show_overlay source=${detection.source} rect=${formatRectForLog(detection.rect)}"
+            } else {
+                "keep_overlay source=${detection.source} rect=${formatRectForLog(detection.rect)}"
+            },
+        )
+        showOrUpdateInstagramExploreFeedOverlay(detection.rect)
+    }
+
+    private fun findInstagramExploreFeedDetection(
+        rootNode: AccessibilityNodeInfo,
+    ): InstagramExploreDetection? {
+        val actionBarRect = findVisibleNodeBounds(rootNode, INSTAGRAM_EXPLORE_ACTION_BAR_VIEW_ID)
+        val feedRect = if (actionBarRect != null) {
+            findVisibleNodeBounds(rootNode, INSTAGRAM_EXPLORE_RECYCLER_VIEW_ID)
+                ?: findVisibleNodeBounds(
+                    rootNode,
+                    INSTAGRAM_EXPLORE_REFRESHABLE_CONTAINER_VIEW_ID,
+                )
+        } else {
+            null
+        }
+        if (actionBarRect != null && feedRect != null) {
+            if (feedRect.width() <= 0 || feedRect.bottom <= actionBarRect.bottom) return null
+            return InstagramExploreDetection(
+                rect = Rect(
+                    feedRect.left,
+                    actionBarRect.bottom,
+                    feedRect.right,
+                    feedRect.bottom,
+                ),
+                source = "feed_container",
+            )
+        }
+        return null
+    }
+
+    private fun isInstagramKnownNotExploreScreen(rootNode: AccessibilityNodeInfo): Boolean {
+        return instagramNotExploreViewIds.any { viewId ->
+            findVisibleNodeByViewId(rootNode, viewId) != null
+        }
+    }
+
+    private fun findVisibleNodeBounds(
+        rootNode: AccessibilityNodeInfo,
+        viewId: String,
+    ): Rect? {
+        val node = findVisibleNodeByViewId(rootNode, viewId) ?: return null
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        if (bounds.width() <= 0 || bounds.height() <= 0) return null
+        return bounds
+    }
+
+    private fun showOrUpdateInstagramExploreFeedOverlay(overlayRect: Rect) {
+        runOnMainThread {
+            val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val existingView = instagramExploreOverlayView
+            val layoutParams = existingView?.layoutParams as? WindowManager.LayoutParams
+
+            if (existingView != null && layoutParams != null) {
+                if (areRectsClose(instagramExploreOverlayRect, overlayRect)) return@runOnMainThread
+                layoutParams.x = overlayRect.left
+                layoutParams.y = overlayRect.top
+                layoutParams.width = overlayRect.width()
+                layoutParams.height = overlayRect.height()
+                runCatching {
+                    windowManager.updateViewLayout(existingView, layoutParams)
+                    instagramExploreOverlayRect = Rect(overlayRect)
+                }.onFailure {
+                    dismissInstagramExploreFeedOverlay()
+                }
+                return@runOnMainThread
+            }
+
+            val overlayView = FrameLayout(this).apply {
+                setBackgroundColor(Color.BLACK)
+                isClickable = true
+                isLongClickable = true
+                isFocusable = false
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                setOnTouchListener { _, _: MotionEvent -> true }
+                addView(instagramExploreOverlayContent(), instagramExploreOverlayContentLayoutParams())
+            }
+            val params = WindowManager.LayoutParams(
+                overlayRect.width(),
+                overlayRect.height(),
+                overlayRect.left,
+                overlayRect.top,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                INSTAGRAM_EXPLORE_OVERLAY_FLAGS,
+                PixelFormat.OPAQUE,
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+            }
+
+            runCatching {
+                windowManager.addView(overlayView, params)
+                instagramExploreOverlayView = overlayView
+                instagramExploreOverlayRect = Rect(overlayRect)
+            }.onFailure {
+                instagramExploreOverlayView = null
+                instagramExploreOverlayRect = null
+            }
+        }
+    }
+
+    private fun dismissInstagramExploreFeedOverlay() {
+        cancelInstagramExploreRevalidation()
+        resetInstagramExploreMissState()
+        resetInstagramExplorePositiveState()
+        runOnMainThread {
+            val overlayView = instagramExploreOverlayView ?: run {
+                instagramExploreOverlayRect = null
+                return@runOnMainThread
+            }
+            logInstagramExploreLifecycle("remove_overlay")
+            instagramExploreOverlayView = null
+            instagramExploreOverlayRect = null
+            runCatching {
+                val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                windowManager.removeView(overlayView)
+            }
+        }
+    }
+
+    private fun handleInstagramExploreDetectionMiss(reason: String) {
+        logInstagramExploreDetection(
+            detected = false,
+            reason = reason,
+        )
+        if (instagramExploreOverlayView == null) {
+            resetInstagramExplorePositiveState()
+            dismissInstagramExploreFeedOverlay()
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (instagramExploreMissStartedAtElapsedRealtime == 0L) {
+            instagramExploreMissStartedAtElapsedRealtime = now
+        }
+        instagramExploreMissCount += 1
+        when {
+            instagramExploreMissCount < INSTAGRAM_EXPLORE_MISS_THRESHOLD -> {
+                logInstagramExploreLifecycle(
+                    "keep_overlay_retry reason=$reason misses=$instagramExploreMissCount",
+                )
+                scheduleInstagramExploreRevalidation(INSTAGRAM_EXPLORE_RETRY_MILLIS)
+            }
+            now - instagramExploreMissStartedAtElapsedRealtime <
+                INSTAGRAM_EXPLORE_MISS_GRACE_MILLIS -> {
+                logInstagramExploreLifecycle(
+                    "keep_overlay_grace reason=$reason misses=$instagramExploreMissCount elapsed=${now - instagramExploreMissStartedAtElapsedRealtime}",
+                )
+                scheduleInstagramExploreRevalidation(INSTAGRAM_EXPLORE_REVALIDATION_MILLIS)
+            }
+            else -> {
+                logInstagramExploreLifecycle(
+                    "dismiss_after_miss reason=$reason misses=$instagramExploreMissCount elapsed=${now - instagramExploreMissStartedAtElapsedRealtime}",
+                )
+                dismissInstagramExploreFeedOverlay()
+            }
+        }
+    }
+
+    private fun revalidateInstagramExploreFeedOverlay() {
+        if (instagramExploreRevalidationRunning) return
+        instagramExploreRevalidationRunning = true
+        try {
+            if (lastForegroundPackage != INSTAGRAM_PACKAGE_NAME) {
+                dismissInstagramExploreFeedOverlay()
+                return
+            }
+            refreshInstagramExploreFeedOverlay()
+        } finally {
+            instagramExploreRevalidationRunning = false
+        }
+    }
+
+    private fun scheduleInstagramExploreRevalidation(delayMillis: Long) {
+        enforcementHandler.removeCallbacks(instagramExploreRevalidationRunnable)
+        enforcementHandler.postDelayed(instagramExploreRevalidationRunnable, delayMillis)
+    }
+
+    private fun cancelInstagramExploreRevalidation() {
+        enforcementHandler.removeCallbacks(instagramExploreRevalidationRunnable)
+    }
+
+    private fun resetInstagramExploreMissState() {
+        instagramExploreMissCount = 0
+        instagramExploreMissStartedAtElapsedRealtime = 0L
+    }
+
+    private fun resetInstagramExplorePositiveState() {
+        instagramExplorePositiveHitCount = 0
+    }
+
+    private fun instagramExploreOverlayContent(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            addView(
+                instagramExploreOverlayLogo(),
+                LinearLayout.LayoutParams(dp(112), dp(112)).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    bottomMargin = dp(18)
+                },
+            )
+            addView(
+                TextView(this@AppGuardAccessibilityService).apply {
+                    text = instagramExploreOverlayMessage()
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.WHITE)
+                    textSize = 15f
+                    setLineSpacing(0f, 1.15f)
+                    setPadding(dp(20), 0, dp(20), 0)
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+    }
+
+    private fun instagramExploreOverlayLogo(): FrameLayout {
+        return FrameLayout(this).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            addView(
+                ImageView(this@AppGuardAccessibilityService).apply {
+                    setImageResource(R.drawable.launch_logo)
+                    imageTintList = ColorStateList.valueOf(Color.WHITE)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                },
+                FrameLayout.LayoutParams(dp(112), dp(112), Gravity.CENTER),
+            )
+        }
+    }
+
+    private fun instagramExploreOverlayContentLayoutParams(): FrameLayout.LayoutParams {
+        return FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER,
+        )
+    }
+
+    private fun instagramExploreOverlayMessage(): CharSequence {
+        val text = "Instagram Explore Feed is\nhidden by Tempus"
+        val spannable = SpannableString(text)
+        val brandStart = text.lastIndexOf("Tempus")
+        if (brandStart >= 0) {
+            spannable.setSpan(
+                ForegroundColorSpan(Color.WHITE),
+                brandStart,
+                text.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            spannable.setSpan(
+                StyleSpan(Typeface.BOLD),
+                brandStart,
+                text.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
+        return spannable
+    }
+
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
+    }
+
+    private fun runOnMainThread(action: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            action()
+        } else {
+            enforcementHandler.post(action)
+        }
+    }
+
+    private fun areRectsClose(first: Rect?, second: Rect): Boolean {
+        if (first == null) return false
+        return kotlin.math.abs(first.left - second.left) <= INSTAGRAM_EXPLORE_RECT_TOLERANCE_PX &&
+            kotlin.math.abs(first.top - second.top) <= INSTAGRAM_EXPLORE_RECT_TOLERANCE_PX &&
+            kotlin.math.abs(first.right - second.right) <= INSTAGRAM_EXPLORE_RECT_TOLERANCE_PX &&
+            kotlin.math.abs(first.bottom - second.bottom) <= INSTAGRAM_EXPLORE_RECT_TOLERANCE_PX
+    }
+
+    private fun logInstagramExploreDetection(
+        detected: Boolean,
+        reason: String,
+    ) {
+        if (
+            lastInstagramExploreDetectionState == detected &&
+            lastInstagramExploreDetectionReason == reason
+        ) {
+            return
+        }
+        lastInstagramExploreDetectionState = detected
+        lastInstagramExploreDetectionReason = reason
+        Log.d(
+            PROMPT_DEBUG_TAG,
+            "instagram_explore_detected=$detected reason=$reason package=$lastForegroundPackage",
+        )
+    }
+
+    private fun logInstagramExploreLifecycle(message: String) {
+        Log.d(
+            PROMPT_DEBUG_TAG,
+            "instagram_explore_overlay $message package=$lastForegroundPackage",
+        )
+    }
+
+    private fun formatRectForLog(rect: Rect): String {
+        return "${rect.left},${rect.top},${rect.right},${rect.bottom}"
+    }
+
     private fun isYouTubeShortsScreen(packageName: String): Boolean {
         val now = System.currentTimeMillis()
         if (now < youTubeShortsDetectedUntilMillis) {
@@ -1001,6 +1415,11 @@ class AppGuardAccessibilityService : AccessibilityService() {
     }
 
     companion object {
+        private data class InstagramExploreDetection(
+            val rect: Rect,
+            val source: String,
+        )
+
         const val PREFS_NAME = "tempus_app_guard"
         const val CUSTOM_TRACKED_APPS_PREF_KEY = "custom_tracked_apps"
         const val BLOCKED_WEBSITES_PREF_KEY = "blocked_websites"
@@ -1022,6 +1441,7 @@ class AppGuardAccessibilityService : AccessibilityService() {
         const val INSTAGRAM_REELS_DMS_SETTING_KEY = "instagram_reels_dms"
         const val INSTAGRAM_PAUSE_ON_OPEN_SETTING_KEY = "instagram_pause_on_open"
         const val INSTAGRAM_STORIES_SETTING_KEY = "instagram_explore"
+        const val INSTAGRAM_HIDE_EXPLORE_FEED_SETTING_KEY = "instagram_hide_explore_feed"
         const val SNAPCHAT_PAUSE_ON_OPEN_SETTING_KEY = "snapchat_pause_on_open"
         const val SNAPCHAT_SPOTLIGHT_SETTING_KEY = "snapchat_spotlight"
         const val YOUTUBE_PAUSE_ON_OPEN_SETTING_KEY = "youtube_pause_on_open"
@@ -1050,6 +1470,17 @@ class AppGuardAccessibilityService : AccessibilityService() {
             "com.instagram.android:id/clips_author_username"
         private const val INSTAGRAM_REELS_LIKE_COUNT_VIEW_ID =
             "com.instagram.android:id/like_count"
+        private const val INSTAGRAM_EXPLORE_ACTION_BAR_VIEW_ID =
+            "com.instagram.android:id/explore_action_bar"
+        private const val INSTAGRAM_EXPLORE_RECYCLER_VIEW_ID =
+            "com.instagram.android:id/recycler_view"
+        private const val INSTAGRAM_EXPLORE_REFRESHABLE_CONTAINER_VIEW_ID =
+            "com.instagram.android:id/refreshable_container"
+        private val instagramNotExploreViewIds = listOf(
+            "com.instagram.android:id/reel_item_toolbar_container",
+            "com.instagram.android:id/inbox_refreshable_thread_list_recyclerview",
+            "com.instagram.android:id/profile_action_bar",
+        )
         private val instagramDmThreadViewIds = listOf(
             "com.instagram.android:id/direct_thread_header",
             "com.instagram.android:id/reply_bar_edittext",
@@ -1069,6 +1500,16 @@ class AppGuardAccessibilityService : AccessibilityService() {
         private const val SNAPCHAT_SPOTLIGHT_DETECTION_CACHE_MILLIS = 1200L
         private const val YOUTUBE_SHORTS_SCAN_DEBOUNCE_MILLIS = 250L
         private const val YOUTUBE_SHORTS_DETECTION_CACHE_MILLIS = 1200L
+        private const val INSTAGRAM_EXPLORE_OVERLAY_FLAGS =
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+        private const val INSTAGRAM_EXPLORE_RECT_TOLERANCE_PX = 12
+        private const val INSTAGRAM_EXPLORE_REVALIDATION_MILLIS = 1500L
+        private const val INSTAGRAM_EXPLORE_RETRY_MILLIS = 700L
+        private const val INSTAGRAM_EXPLORE_SHOW_CONFIRM_MILLIS = 250L
+        private const val INSTAGRAM_EXPLORE_MISS_GRACE_MILLIS = 1500L
+        private const val INSTAGRAM_EXPLORE_MISS_THRESHOLD = 2
+        private const val INSTAGRAM_EXPLORE_POSITIVE_HIT_THRESHOLD = 1
         private val builtInTrackedAppLimits = listOf(
             AppLimit(
                 settingKey = "instagram_app",
