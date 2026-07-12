@@ -610,7 +610,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         });
       }
 
-      installedApps = await installedAppsFuture;
       final statisticsData = await statisticsDataFuture;
       if (!mounted) return;
 
@@ -625,12 +624,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (!mounted) return;
 
       setState(() {
-        _installedApps = installedApps;
         _statisticsSnapshot = resolvedStatisticsSnapshot;
         _statisticsNeedsRefresh = false;
         _isStatisticsLoading = false;
         _statisticsLoadErrorMessage = null;
       });
+
+      unawaited(
+        installedAppsFuture
+            .then((apps) {
+              if (!mounted) return;
+              setState(() {
+                _installedApps = apps;
+              });
+            })
+            .catchError((_) {}),
+      );
     } on TimeoutException {
       final fallbackSnapshot =
           storedSnapshot ?? await _statisticsHistoryStore.loadSnapshot();
@@ -642,6 +651,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _statisticsLoadErrorMessage =
             'Statistics took too long to load. Showing saved data.';
       });
+      unawaited(
+        _requestInstalledApps()
+            .timeout(const Duration(seconds: 10))
+            .then((apps) {
+              if (!mounted) return;
+              setState(() {
+                _installedApps = apps;
+              });
+            })
+            .catchError((_) {}),
+      );
     } on PlatformException {
       final fallbackSnapshot =
           storedSnapshot ?? await _statisticsHistoryStore.loadSnapshot();
@@ -814,6 +834,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       blockedSince: DateTime.fromMillisecondsSinceEpoch(
                         blockedSinceMillis,
                       ),
+                      isEnabled: entry['isEnabled'] as bool? ?? true,
                     );
                   })
                   .where((entry) => entry.domain.isNotEmpty),
@@ -865,6 +886,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               (entry) => {
                 'domain': entry.domain,
                 'blockedSince': entry.blockedSince.millisecondsSinceEpoch,
+                'isEnabled': entry.isEnabled,
               },
             )
             .toList(),
@@ -942,7 +964,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _openWebsiteExternally(String domain) async {
-    final normalizedDomain = _normalizeWebsite(domain);
+    final normalizedDomain = _parseBlockedWebsiteDomain(domain);
     if (normalizedDomain.isEmpty) return;
     final url = 'https://$normalizedDomain';
     try {
@@ -973,8 +995,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _handleSharedWebsite(String rawWebsite) async {
-    final website = _normalizeWebsite(rawWebsite);
-    if (website.isEmpty || !mounted) return;
+    final website = _parseBlockedWebsiteDomain(rawWebsite);
+    if (!mounted) return;
+    if (website.isEmpty) {
+      _showInvalidWebsiteFeedback();
+      return;
+    }
 
     _selectTab(
       1,
@@ -1060,7 +1086,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       },
     );
     if (shouldAdd == true) {
-      _addBlockedWebsite(website);
+      _tryAddBlockedWebsite(website);
     }
   }
 
@@ -1304,20 +1330,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         (first.year == second.year && first.month > second.month);
   }
 
-  void _addBlockedWebsite(String rawWebsite) {
-    final website = _normalizeWebsite(rawWebsite);
-    if (website.isEmpty) return;
+  bool _tryAddBlockedWebsite(String rawWebsite) {
+    final website = _parseBlockedWebsiteDomain(rawWebsite);
+    if (website.isEmpty) {
+      _showInvalidWebsiteFeedback();
+      return false;
+    }
     final alreadyExists = _blockedWebsites.any(
       (entry) => entry.domain.toLowerCase() == website.toLowerCase(),
     );
-    if (alreadyExists) return;
+    if (alreadyExists) return false;
     setState(() {
       _blockedWebsites.insert(
         0,
-        BlockedWebsiteEntry(domain: website, blockedSince: DateTime.now()),
+        BlockedWebsiteEntry(
+          domain: website,
+          blockedSince: DateTime.now(),
+          isEnabled: true,
+        ),
       );
     });
     _persistBlockedWebsites();
+    return true;
   }
 
   void _deleteBlockedWebsite(BlockedWebsiteEntry entry) {
@@ -1327,12 +1361,62 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _persistBlockedWebsites();
   }
 
-  String _normalizeWebsite(String input) {
-    var normalized = input.trim().toLowerCase();
-    normalized = normalized.replaceFirst(RegExp(r'^https?://'), '');
-    normalized = normalized.replaceFirst(RegExp(r'^www\.'), '');
-    normalized = normalized.replaceAll(RegExp(r'/$'), '');
+  void _toggleBlockedWebsite(BlockedWebsiteEntry entry, bool isEnabled) {
+    final index = _blockedWebsites.indexOf(entry);
+    if (index < 0) return;
+    setState(() {
+      _blockedWebsites[index] = BlockedWebsiteEntry(
+        domain: entry.domain,
+        blockedSince: entry.blockedSince,
+        isEnabled: isEnabled,
+      );
+    });
+    _persistBlockedWebsites();
+  }
+
+  String _parseBlockedWebsiteDomain(String input) {
+    final trimmed = input.trim();
+    if (trimmed.isEmpty || trimmed.contains(RegExp(r'\s'))) {
+      return '';
+    }
+
+    final candidate = trimmed.contains('://') ? trimmed : 'https://$trimmed';
+    final uri = Uri.tryParse(candidate);
+    final host = uri?.host.trim().toLowerCase() ?? '';
+    if (host.isEmpty) return '';
+
+    final normalized = host
+        .replaceFirst(RegExp(r'^www\.'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+    final labels = normalized.split('.');
+    if (labels.length < 2) return '';
+
+    for (final label in labels) {
+      if (label.isEmpty) return '';
+      if (!RegExp(r'^[a-z0-9-]+$').hasMatch(label)) return '';
+      if (label.startsWith('-') || label.endsWith('-')) return '';
+    }
+
+    final topLevelDomain = labels.last;
+    final isAlphaTld = RegExp(r'^[a-z]{2,}$').hasMatch(topLevelDomain);
+    final isPunycodeTld = RegExp(
+      r'^xn--[a-z0-9-]{2,}$',
+    ).hasMatch(topLevelDomain);
+    if (!isAlphaTld && !isPunycodeTld) return '';
+
     return normalized;
+  }
+
+  void _showInvalidWebsiteFeedback() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Invalid Link URL'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   void _selectTab(int index, {VoidCallback? update}) {
@@ -1458,8 +1542,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         blockedWebsites: _blockedWebsites,
         dailyTimeLimits: _dailyTimeLimits,
         blockSettings: _blockSettings,
-        onAddWebsite: _addBlockedWebsite,
+        onAddWebsite: _tryAddBlockedWebsite,
         onDeleteWebsite: _deleteBlockedWebsite,
+        onToggleWebsiteBlocked: _toggleBlockedWebsite,
         onRequestInstalledApps: _requestInstalledApps,
         onAddCustomTrackedApp: (selection) {
           final app = selection.app;

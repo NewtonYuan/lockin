@@ -34,13 +34,18 @@ class ConfirmBlockerActivity : ComponentActivity() {
             ?: when (target) {
                 TARGET_SNAPCHAT -> "Snapchat"
                 TARGET_YOUTUBE -> "YouTube"
+                TARGET_WEBSITE -> websiteDomain ?: "Website"
                 else -> "Instagram"
             }
+
+    private val websiteDomain: String?
+        get() = intent?.getStringExtra(EXTRA_WEBSITE_DOMAIN)?.takeIf { it.isNotBlank() }
 
     private val blockedLabel: String
         get() = when (target) {
             TARGET_SNAPCHAT -> "Spotlight"
             TARGET_YOUTUBE -> "Shorts"
+            TARGET_WEBSITE -> websiteDomain ?: "Website"
             else -> "Reels"
         }
 
@@ -79,7 +84,7 @@ class ConfirmBlockerActivity : ComponentActivity() {
 
                 addView(
                     Button(context).apply {
-                        text = "Go Back"
+                        text = if (target == TARGET_WEBSITE) "Oh, okay" else "Go Back"
                         setTextColor(Color.WHITE)
                         background = prominentRippleBackground()
                         setAllCaps(false)
@@ -89,7 +94,13 @@ class ConfirmBlockerActivity : ComponentActivity() {
                         setPadding(dp(16), 0, dp(16), 0)
                         setOnClickListener {
                             AppGuardAccessibilityService.dismissPrompt()
-                            AppGuardAccessibilityService.returnToPreviousPageAfterPrompt()
+                            if (target == TARGET_WEBSITE) {
+                                AppGuardAccessibilityService.openWebsiteRedirectAfterPrompt(
+                                    "https://www.google.com",
+                                )
+                            } else {
+                                AppGuardAccessibilityService.returnToPreviousPageAfterPrompt()
+                            }
                             finish()
                         }
                     },
@@ -186,10 +197,18 @@ class ConfirmBlockerActivity : ComponentActivity() {
                         minHeight = dp(48)
                         setPadding(dp(16), 0, dp(16), 0)
                         setOnClickListener {
-                            AppGuardAccessibilityService.allowTargetForMinutes(
-                                target,
-                                picker.selectedValue(),
-                            )
+                            val minutes = picker.selectedValue()
+                            if (target == TARGET_WEBSITE) {
+                                AppGuardAccessibilityService.allowWebsiteForMinutes(
+                                    websiteDomain,
+                                    minutes,
+                                )
+                            } else {
+                                AppGuardAccessibilityService.allowTargetForMinutes(
+                                    target,
+                                    minutes,
+                                )
+                            }
                             finish()
                         }
                     },
@@ -420,6 +439,8 @@ class ConfirmBlockerActivity : ComponentActivity() {
         const val TARGET_INSTAGRAM = "instagram"
         const val TARGET_SNAPCHAT = "snapchat"
         const val TARGET_YOUTUBE = "youtube"
+        const val TARGET_WEBSITE = "website"
+        const val EXTRA_WEBSITE_DOMAIN = "website_domain"
         const val BRAND = 0xFF00688F.toInt()
         const val BRAND_PRESSED = 0xFF00A6D6.toInt()
         private const val PROMPT_PANEL_TAG = "prompt_panel"

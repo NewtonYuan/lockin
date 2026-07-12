@@ -130,7 +130,7 @@ class SettingsTab extends StatelessWidget {
                   const _SettingsRow(
                     icon: Icons.info_outline_rounded,
                     title: 'Version',
-                    value: '0.3.0',
+                    value: '0.4.1',
                     showChevron: false,
                   ),
                 ],

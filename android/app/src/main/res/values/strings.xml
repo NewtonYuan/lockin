@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="accessibility_service_label">Tempus Guard</string>
-    <string name="accessibility_service_description">Detects supported apps and blocked websites so Tempus can show pause and blocking prompts.</string>
+    <string name="accessibility_service_description">Detects supported apps so Tempus can show pause and blocking prompts.</string>
 </resources>

@@ -11,10 +11,12 @@ class BlockedWebsiteEntry {
   const BlockedWebsiteEntry({
     required this.domain,
     required this.blockedSince,
+    this.isEnabled = true,
   });
 
   final String domain;
   final DateTime blockedSince;
+  final bool isEnabled;
 }
 
 class CustomTrackedApp {
@@ -80,6 +82,7 @@ class BlockScreen extends StatelessWidget {
     required this.blockSettings,
     required this.onAddWebsite,
     required this.onDeleteWebsite,
+    required this.onToggleWebsiteBlocked,
     required this.onRequestInstalledApps,
     required this.onAddCustomTrackedApp,
     required this.onDeleteCustomTrackedApp,
@@ -105,8 +108,10 @@ class BlockScreen extends StatelessWidget {
   final List<BlockedWebsiteEntry> blockedWebsites;
   final Map<String, int?> dailyTimeLimits;
   final Map<String, bool> blockSettings;
-  final ValueChanged<String> onAddWebsite;
+  final bool Function(String value) onAddWebsite;
   final ValueChanged<BlockedWebsiteEntry> onDeleteWebsite;
+  final void Function(BlockedWebsiteEntry entry, bool value)
+  onToggleWebsiteBlocked;
   final Future<List<CustomTrackedApp>> Function() onRequestInstalledApps;
   final ValueChanged<InstalledAppSelection> onAddCustomTrackedApp;
   final ValueChanged<CustomTrackedApp> onDeleteCustomTrackedApp;
@@ -200,6 +205,7 @@ class BlockScreen extends StatelessWidget {
                   blockedWebsites: blockedWebsites,
                   onAddWebsite: onAddWebsite,
                   onDeleteWebsite: onDeleteWebsite,
+                  onToggleWebsiteBlocked: onToggleWebsiteBlocked,
                 ),
               ),
             ),
@@ -216,9 +222,7 @@ class BlockScreen extends StatelessWidget {
       _AppBlockCard(
         appName: 'Instagram',
         iconAssetPath: 'assets/apps/instagram.svg',
-        isInstalled: _isPackageInstalled(
-          'com.instagram.android',
-        ),
+        isInstalled: _isPackageInstalled('com.instagram.android'),
         isExpanded: expandedApps.contains('Instagram'),
         items: [
           _BlockItemData.timeLimit(
@@ -267,8 +271,7 @@ class BlockScreen extends StatelessWidget {
         onSelectTimeLimit: onSelectTimeLimit,
         isPremium: isPremium,
         onOpenPremium: onOpenPremium,
-        showExplorePermissionBanner:
-            isPremium && !isOverlayPermissionAllowed,
+        showExplorePermissionBanner: isPremium && !isOverlayPermissionAllowed,
         onOpenExplorePermissionSettings: onOpenOverlayPermissionSettings,
       ),
       const SizedBox(height: 8),
@@ -357,7 +360,11 @@ class BlockScreen extends StatelessWidget {
         _AdditionalTrackedAppCard(
           app: app,
           minutes: dailyTimeLimits[app.settingKey],
-          pauseOnOpen: blockSettings[customTrackedAppPauseOnOpenSettingKey(app.packageName)] ?? false,
+          pauseOnOpen:
+              blockSettings[customTrackedAppPauseOnOpenSettingKey(
+                app.packageName,
+              )] ??
+              false,
           isExpanded: expandedApps.contains(app.packageName),
           onToggleExpanded: () => onToggleExpanded(app.packageName),
           onSelectTimeLimit: (minutes) =>
@@ -373,11 +380,7 @@ class BlockScreen extends StatelessWidget {
     }
 
     children.add(const SizedBox(height: 8));
-    children.add(
-      _AddAppCard(
-        onTap: () => _promptForInstalledApp(context),
-      ),
-    );
+    children.add(_AddAppCard(onTap: () => _promptForInstalledApp(context)));
     return children;
   }
 
@@ -415,10 +418,11 @@ class BlockScreen extends StatelessWidget {
               return false;
             }
             return true;
-          }).toList()
-            ..sort((first, second) => first.appName.toLowerCase().compareTo(
-                  second.appName.toLowerCase(),
-                ));
+          }).toList()..sort(
+            (first, second) => first.appName.toLowerCase().compareTo(
+              second.appName.toLowerCase(),
+            ),
+          );
         },
       ),
     );
@@ -489,9 +493,9 @@ class _BlockSettingsSheetState extends State<_BlockSettingsSheet> {
                 Text(
                   'Block Settings',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: appText,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    color: appText,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(height: 14),
                 Material(
@@ -599,9 +603,9 @@ Future<int?> _showPauseDurationPicker(
                       Text(
                         'Pause duration',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: appText,
-                              fontWeight: FontWeight.w700,
-                            ),
+                          color: appText,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                       const SizedBox(height: 14),
                       SizedBox(
@@ -623,14 +627,16 @@ Future<int?> _showPauseDurationPicker(
                         children: [
                           Expanded(
                             child: TextButton(
-                              onPressed: () => Navigator.of(dialogContext).pop(),
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(),
                               child: const Text('Cancel'),
                             ),
                           ),
                           Expanded(
                             child: FilledButton(
-                              onPressed: () =>
-                                  Navigator.of(dialogContext).pop(selectedSeconds),
+                              onPressed: () => Navigator.of(
+                                dialogContext,
+                              ).pop(selectedSeconds),
                               child: const Text('Save'),
                             ),
                           ),
@@ -843,10 +849,7 @@ class _CategoryPageViewState extends State<_CategoryPageView> {
           widget.onSelectCategory(category);
         }
       },
-      children: [
-        widget.appsChild,
-        widget.websitesChild,
-      ],
+      children: [widget.appsChild, widget.websitesChild],
     );
   }
 
@@ -878,7 +881,8 @@ class _AppSectionHeader extends StatelessWidget {
       children: [
         Text(
           label,
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+          style:
+              Theme.of(context).textTheme.labelLarge?.copyWith(
                 color: appMutedText,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.2,
@@ -891,11 +895,7 @@ class _AppSectionHeader extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         const Expanded(
-          child: Divider(
-            color: appBorder,
-            height: 1,
-            thickness: 1,
-          ),
+          child: Divider(color: appBorder, height: 1, thickness: 1),
         ),
         if (trailingText != null) ...[
           const SizedBox(width: 10),
@@ -908,7 +908,8 @@ class _AppSectionHeader extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
               child: Text(
                 trailingText!,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                style:
+                    Theme.of(context).textTheme.labelLarge?.copyWith(
                       color: appMutedText,
                       fontWeight: FontWeight.w800,
                     ) ??
@@ -989,9 +990,7 @@ class _AdditionalTrackedAppCard extends StatelessWidget {
 }
 
 class _AddAppCard extends StatelessWidget {
-  const _AddAppCard({
-    required this.onTap,
-  });
+  const _AddAppCard({required this.onTap});
 
   static const double _rowMinHeight = 52;
   static const double _iconBoxSize = 28;
@@ -1060,14 +1059,13 @@ class _AddAppCard extends StatelessWidget {
 }
 
 class _InstalledAppPickerSheet extends StatefulWidget {
-  const _InstalledAppPickerSheet({
-    required this.loadInstalledApps,
-  });
+  const _InstalledAppPickerSheet({required this.loadInstalledApps});
 
   final Future<List<CustomTrackedApp>> Function() loadInstalledApps;
 
   @override
-  State<_InstalledAppPickerSheet> createState() => _InstalledAppPickerSheetState();
+  State<_InstalledAppPickerSheet> createState() =>
+      _InstalledAppPickerSheetState();
 }
 
 class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
@@ -1120,10 +1118,7 @@ class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
             child: PageView(
               controller: _pageController,
               physics: const NeverScrollableScrollPhysics(),
-              children: [
-                _buildListPage(context),
-                _buildDetailPage(context),
-              ],
+              children: [_buildListPage(context), _buildDetailPage(context)],
             ),
           ),
         ),
@@ -1169,7 +1164,8 @@ class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
                   );
                 }
 
-                final installedApps = snapshot.data ?? const <CustomTrackedApp>[];
+                final installedApps =
+                    snapshot.data ?? const <CustomTrackedApp>[];
                 final filteredApps = installedApps.where((app) {
                   final normalizedQuery = _query.trim().toLowerCase();
                   if (normalizedQuery.isEmpty) return true;
@@ -1201,14 +1197,13 @@ class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
                     Expanded(
                       child: installedApps.isEmpty
                           ? const _InstalledAppsMessageState(
-                              message: 'No additional installed apps available.',
+                              message:
+                                  'No additional installed apps available.',
                             )
                           : ListView.separated(
                               itemCount: filteredApps.length,
-                              separatorBuilder: (_, _) => const Divider(
-                                height: 1,
-                                color: appBorder,
-                              ),
+                              separatorBuilder: (_, _) =>
+                                  const Divider(height: 1, color: appBorder),
                               itemBuilder: (context, index) {
                                 final app = filteredApps[index];
                                 return InkWell(
@@ -1220,7 +1215,9 @@ class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
                                     });
                                     _pageController.animateToPage(
                                       1,
-                                      duration: const Duration(milliseconds: 280),
+                                      duration: const Duration(
+                                        milliseconds: 280,
+                                      ),
                                       curve: Curves.easeOutCubic,
                                     );
                                   },
@@ -1239,10 +1236,12 @@ class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
                                             height: _pickerIconBoxSize,
                                             decoration: BoxDecoration(
                                               color: appSurfaceStrong,
-                                              borderRadius: BorderRadius.circular(8),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
                                             ),
                                             child: ClipRRect(
-                                              borderRadius: BorderRadius.circular(8),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
                                               child: app.iconBytes != null
                                                   ? Image.memory(
                                                       app.iconBytes!,
@@ -1253,12 +1252,16 @@ class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
                                                         app.appName.isEmpty
                                                             ? '?'
                                                             : app.appName
-                                                                .substring(0, 1)
-                                                                .toUpperCase(),
+                                                                  .substring(
+                                                                    0,
+                                                                    1,
+                                                                  )
+                                                                  .toUpperCase(),
                                                         style: const TextStyle(
                                                           color: appText,
                                                           fontSize: 16,
-                                                          fontWeight: FontWeight.w700,
+                                                          fontWeight:
+                                                              FontWeight.w700,
                                                         ),
                                                       ),
                                                     ),
@@ -1333,25 +1336,19 @@ class _InstalledAppPickerSheetState extends State<_InstalledAppPickerSheet> {
                     _selectedApp = null;
                   });
                 },
-                icon: const Icon(
-                  Icons.arrow_back_rounded,
-                  color: appText,
-                ),
+                icon: const Icon(Icons.arrow_back_rounded, color: appText),
                 splashRadius: 20,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 32,
-                  minHeight: 32,
-                ),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   app.appName,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: appText,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    color: appText,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
@@ -1498,35 +1495,71 @@ class _WebsiteBlockPanel extends StatelessWidget {
     required this.blockedWebsites,
     required this.onAddWebsite,
     required this.onDeleteWebsite,
+    required this.onToggleWebsiteBlocked,
   });
 
   final List<BlockedWebsiteEntry> blockedWebsites;
-  final ValueChanged<String> onAddWebsite;
+  final bool Function(String value) onAddWebsite;
   final ValueChanged<BlockedWebsiteEntry> onDeleteWebsite;
+  final void Function(BlockedWebsiteEntry entry, bool value)
+  onToggleWebsiteBlocked;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _WebsiteEntryCard(
-          onAddWebsite: onAddWebsite,
-        ),
-        const SizedBox(height: 14),
-        _BlockedWebsitesCard(
-          blockedWebsites: blockedWebsites,
-          onDeleteWebsite: onDeleteWebsite,
-        ),
+        _WebsiteEntryCard(onAddWebsite: onAddWebsite),
+        if (blockedWebsites.isEmpty) ...[
+          const SizedBox(height: 14),
+          Material(
+            color: appSurface,
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: double.infinity,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 20, 14, 18),
+                child: Column(
+                  children: [
+                    SvgPicture.asset(
+                      'assets/images/through_the_park_empty.svg',
+                      width: 180,
+                      height: 180,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'No blocked websites yet.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: appMutedText,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ] else ...[
+          const SizedBox(height: 14),
+          for (var index = 0; index < blockedWebsites.length; index++) ...[
+            _BlockedWebsiteRow(
+              entry: blockedWebsites[index],
+              onDelete: () => onDeleteWebsite(blockedWebsites[index]),
+              onToggleBlocked: (value) =>
+                  onToggleWebsiteBlocked(blockedWebsites[index], value),
+            ),
+            if (index < blockedWebsites.length - 1) const SizedBox(height: 8),
+          ],
+        ],
       ],
     );
   }
 }
 
 class _WebsiteEntryCard extends StatefulWidget {
-  const _WebsiteEntryCard({
-    required this.onAddWebsite,
-  });
+  const _WebsiteEntryCard({required this.onAddWebsite});
 
-  final ValueChanged<String> onAddWebsite;
+  final bool Function(String value) onAddWebsite;
 
   @override
   State<_WebsiteEntryCard> createState() => _WebsiteEntryCardState();
@@ -1550,8 +1583,10 @@ class _WebsiteEntryCardState extends State<_WebsiteEntryCard> {
   void _submitWebsite() {
     final value = _controller.text.trim();
     if (value.isEmpty) return;
-    widget.onAddWebsite(value);
-    _controller.clear();
+    final didAdd = widget.onAddWebsite(value);
+    if (didAdd) {
+      _controller.clear();
+    }
   }
 
   @override
@@ -1563,21 +1598,14 @@ class _WebsiteEntryCardState extends State<_WebsiteEntryCard> {
         padding: const EdgeInsets.all(14),
         child: Row(
           children: [
-            const Icon(
-              Icons.language_rounded,
-              color: appMutedText,
-              size: 22,
-            ),
+            const Icon(Icons.language_rounded, color: appMutedText, size: 22),
             const SizedBox(width: 12),
             Expanded(
               child: Container(
                 padding: const EdgeInsets.only(bottom: 2),
                 decoration: const BoxDecoration(
                   border: Border(
-                    bottom: BorderSide(
-                      color: appBorder,
-                      width: 1,
-                    ),
+                    bottom: BorderSide(color: appBorder, width: 1),
                   ),
                 ),
                 child: TextField(
@@ -1608,10 +1636,7 @@ class _WebsiteEntryCardState extends State<_WebsiteEntryCard> {
                 shape: const CircleBorder(),
                 minimumSize: const Size(40, 40),
               ),
-              icon: const Icon(
-                Icons.add_rounded,
-                size: 22,
-              ),
+              icon: const Icon(Icons.add_rounded, size: 22),
             ),
           ],
         ),
@@ -1620,141 +1645,130 @@ class _WebsiteEntryCardState extends State<_WebsiteEntryCard> {
   }
 }
 
-class _BlockedWebsitesCard extends StatelessWidget {
-  const _BlockedWebsitesCard({
-    required this.blockedWebsites,
-    required this.onDeleteWebsite,
+class _BlockedWebsiteRow extends StatefulWidget {
+  const _BlockedWebsiteRow({
+    required this.entry,
+    required this.onDelete,
+    required this.onToggleBlocked,
   });
 
-  final List<BlockedWebsiteEntry> blockedWebsites;
-  final ValueChanged<BlockedWebsiteEntry> onDeleteWebsite;
+  final BlockedWebsiteEntry entry;
+  final VoidCallback onDelete;
+  final ValueChanged<bool> onToggleBlocked;
+
+  @override
+  State<_BlockedWebsiteRow> createState() => _BlockedWebsiteRowState();
+}
+
+class _BlockedWebsiteRowState extends State<_BlockedWebsiteRow> {
+  static const double _iconSize = 28;
+  bool _isExpanded = false;
 
   @override
   Widget build(BuildContext context) {
+    final entry = widget.entry;
+    final borderRadius = BorderRadius.circular(8);
+
     return Material(
       color: appSurface,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Blocked Websites',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: appText,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 10),
-            if (blockedWebsites.isEmpty)
-              SizedBox(
-                width: double.infinity,
+      borderRadius: borderRadius,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Ink(
+            decoration: BoxDecoration(borderRadius: borderRadius),
+            child: InkWell(
+              borderRadius: borderRadius,
+              splashColor: brand.withValues(alpha: 0.18),
+              highlightColor: appText.withValues(alpha: 0.04),
+              onTap: () {
+                setState(() {
+                  _isExpanded = !_isExpanded;
+                });
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 52),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(0, 10, 0, 18),
-                  child: Column(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Row(
                     children: [
-                      SvgPicture.asset(
-                        'assets/images/through_the_park_empty.svg',
-                        width: 180,
-                        height: 180,
+                      Container(
+                        width: _iconSize,
+                        height: _iconSize,
+                        decoration: BoxDecoration(
+                          color: appSurfaceStrong,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: _WebsiteFavicon(domain: entry.domain),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'No blocked websites yet.',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: appMutedText,
-                          fontWeight: FontWeight.w600,
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          entry.domain,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: appText,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      AnimatedRotation(
+                        turns: _isExpanded ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOut,
+                        child: const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: appText,
+                          size: 22,
                         ),
                       ),
                     ],
                   ),
                 ),
-              )
-            else
-              for (var index = 0; index < blockedWebsites.length; index++) ...[
-                _BlockedWebsiteRow(
-                  entry: blockedWebsites[index],
-                  onDelete: () => onDeleteWebsite(blockedWebsites[index]),
-                ),
-                if (index < blockedWebsites.length - 1)
-                  const Divider(
-                    height: 1,
-                    thickness: 1,
-                    color: appBorder,
-                  ),
-              ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BlockedWebsiteRow extends StatelessWidget {
-  const _BlockedWebsiteRow({
-    required this.entry,
-    required this.onDelete,
-  });
-
-  final BlockedWebsiteEntry entry;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: appSurfaceStrong,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(
-              Icons.public_rounded,
-              color: appMutedText,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  entry.domain,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: appText,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  _formatBlockedSince(entry.blockedSince),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: appMutedText,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: onDelete,
-            icon: SvgPicture.asset(
-              'assets/icons/delete_forever.svg',
-              width: 24,
-              height: 24,
-              colorFilter: const ColorFilter.mode(
-                appMutedText,
-                BlendMode.srcIn,
               ),
             ),
-            splashRadius: 22,
+          ),
+          ClipRect(
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: _isExpanded
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _BlockItemRow(
+                          item: _BlockItemData.toggle(
+                            keyName: '__block_website__',
+                            label: 'Block Website',
+                            value: entry.isEnabled,
+                            iconAssetPath: 'assets/icons/block.svg',
+                            iconSize: 24,
+                          ),
+                          isPremium: true,
+                          onOpenPremium: () {},
+                          onToggleChanged: widget.onToggleBlocked,
+                          onTimeLimitSelected: (_) {},
+                        ),
+                        _BlockItemRow(
+                          item: const _BlockItemData.action(
+                            keyName: '__remove_website__',
+                            label: 'Remove website',
+                            iconAssetPath: 'assets/icons/delete_forever.svg',
+                            iconSize: 24,
+                          ),
+                          isPremium: true,
+                          onOpenPremium: () {},
+                          onToggleChanged: (_) {},
+                          onTimeLimitSelected: (_) {},
+                          onActionPressed: (_) => widget.onDelete(),
+                        ),
+                      ],
+                    )
+                  : const SizedBox.shrink(),
+            ),
           ),
         ],
       ),
@@ -1762,22 +1776,49 @@ class _BlockedWebsiteRow extends StatelessWidget {
   }
 }
 
-String _formatBlockedSince(DateTime blockedSince) {
-  const monthNames = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-  return 'Since ${monthNames[blockedSince.month - 1]} ${blockedSince.day}, ${blockedSince.year}';
+class _WebsiteFavicon extends StatelessWidget {
+  const _WebsiteFavicon({required this.domain});
+
+  static const double _iconSize = 28;
+
+  final String domain;
+
+  String get _faviconUrl =>
+      'https://www.google.com/s2/favicons?sz=64&domain_url=${Uri.encodeComponent('https://$domain')}';
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Image.network(
+        _faviconUrl,
+        width: _iconSize,
+        height: _iconSize,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.medium,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) {
+            return child;
+          }
+          return const _WebsiteFaviconFallback();
+        },
+        errorBuilder: (context, error, stackTrace) {
+          return const _WebsiteFaviconFallback();
+        },
+      ),
+    );
+  }
+}
+
+class _WebsiteFaviconFallback extends StatelessWidget {
+  const _WebsiteFaviconFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Icon(Icons.public_rounded, color: appMutedText, size: 20),
+    );
+  }
 }
 
 class _CategoryTab extends StatelessWidget {
@@ -1869,8 +1910,7 @@ class _AppBlockCard extends StatelessWidget {
     final iconOpacity = isInstalled ? 1.0 : 0.35;
     final canExpand = isInstalled;
     final shouldShowItems = isInstalled && isExpanded;
-    final isDirectTimeLimitApp =
-        items.length == 1 && items.first.isTimeLimit;
+    final isDirectTimeLimitApp = items.length == 1 && items.first.isTimeLimit;
 
     if (isDirectTimeLimitApp) {
       return _SingleTimeLimitAppButton(
@@ -1881,11 +1921,11 @@ class _AppBlockCard extends StatelessWidget {
         minutes: items.first.minutes,
         onTap: isInstalled
             ? () => showDailyTimeLimitPicker(
-                  context,
-                  initialMinutes: items.first.minutes,
-                  onTimeLimitSelected: (minutes) =>
-                      onSelectTimeLimit(items.first.keyName, minutes),
-                )
+                context,
+                initialMinutes: items.first.minutes,
+                onTimeLimitSelected: (minutes) =>
+                    onSelectTimeLimit(items.first.keyName, minutes),
+              )
             : null,
       );
     }
@@ -1959,9 +1999,7 @@ class _AppBlockCard extends StatelessWidget {
                               const SizedBox(width: 6),
                               Text(
                                 '(Not Installed)',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
+                                style: Theme.of(context).textTheme.bodySmall
                                     ?.copyWith(
                                       color: appMutedText,
                                       fontWeight: FontWeight.w700,
@@ -2079,9 +2117,7 @@ class _InstalledAppsLoadingState extends StatelessWidget {
 }
 
 class _InstalledAppsMessageState extends StatelessWidget {
-  const _InstalledAppsMessageState({
-    required this.message,
-  });
+  const _InstalledAppsMessageState({required this.message});
 
   final String message;
 
@@ -2233,10 +2269,8 @@ class _SingleTimeLimitAppButton extends StatelessWidget {
 }
 
 class _BlockAppIcon extends StatelessWidget {
-  const _BlockAppIcon({
-    this.assetPath,
-    this.iconBytes,
-  }) : assert(assetPath != null || iconBytes != null);
+  const _BlockAppIcon({this.assetPath, this.iconBytes})
+    : assert(assetPath != null || iconBytes != null);
 
   final String? assetPath;
   final Uint8List? iconBytes;
@@ -2244,22 +2278,13 @@ class _BlockAppIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (iconBytes != null) {
-      return Image.memory(
-        iconBytes!,
-        fit: BoxFit.fill,
-      );
+      return Image.memory(iconBytes!, fit: BoxFit.fill);
     }
     final resolvedAssetPath = assetPath!;
     if (resolvedAssetPath.toLowerCase().endsWith('.svg')) {
-      return SvgPicture.asset(
-        resolvedAssetPath,
-        fit: BoxFit.fill,
-      );
+      return SvgPicture.asset(resolvedAssetPath, fit: BoxFit.fill);
     }
-    return Image.asset(
-      resolvedAssetPath,
-      fit: BoxFit.fill,
-    );
+    return Image.asset(resolvedAssetPath, fit: BoxFit.fill);
   }
 }
 
@@ -2329,10 +2354,7 @@ class _BlockItemRow extends StatelessWidget {
             item.iconAssetPath!,
             width: isSubItem ? item.iconSize - 4 : item.iconSize - 2,
             height: isSubItem ? item.iconSize - 4 : item.iconSize - 2,
-            colorFilter: const ColorFilter.mode(
-              appMutedText,
-              BlendMode.srcIn,
-            ),
+            colorFilter: const ColorFilter.mode(appMutedText, BlendMode.srcIn),
           )
         : const Icon(Icons.block_outlined, color: appMutedText, size: 22);
 
@@ -2349,7 +2371,9 @@ class _BlockItemRow extends StatelessWidget {
             child: ConstrainedBox(
               constraints: BoxConstraints(minHeight: rowMinHeight),
               child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: toggleHorizontalPadding),
+                padding: EdgeInsets.symmetric(
+                  horizontal: toggleHorizontalPadding,
+                ),
                 child: Row(
                   children: [
                     SizedBox(width: leadingInset),
@@ -2389,12 +2413,7 @@ class _BlockItemRow extends StatelessWidget {
                     SizedBox(width: leadingInset),
                     leading,
                     SizedBox(width: leadingGap),
-                    Expanded(
-                      child: Text(
-                        item.label,
-                        style: labelStyle,
-                      ),
-                    ),
+                    Expanded(child: Text(item.label, style: labelStyle)),
                     Text(
                       _formatMinutes(item.minutes),
                       style: const TextStyle(
@@ -2432,18 +2451,15 @@ class _BlockItemRow extends StatelessWidget {
           child: ConstrainedBox(
             constraints: BoxConstraints(minHeight: rowMinHeight),
             child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: toggleHorizontalPadding),
+              padding: EdgeInsets.symmetric(
+                horizontal: toggleHorizontalPadding,
+              ),
               child: Row(
                 children: [
                   SizedBox(width: leadingInset),
                   leading,
                   SizedBox(width: leadingGap),
-                  Expanded(
-                    child: Text(
-                      item.label,
-                      style: labelStyle,
-                    ),
-                  ),
+                  Expanded(child: Text(item.label, style: labelStyle)),
                   if (isLockedPremium)
                     SizedBox(
                       width: 40,
@@ -2545,12 +2561,8 @@ class _DurationWheel extends StatelessWidget {
           margin: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
             border: Border(
-              top: BorderSide(
-                color: appBorder,
-              ),
-              bottom: BorderSide(
-                color: appBorder,
-              ),
+              top: BorderSide(color: appBorder),
+              bottom: BorderSide(color: appBorder),
             ),
           ),
         ),
@@ -2571,7 +2583,6 @@ class _DurationWheel extends StatelessWidget {
       ),
     );
   }
-
 }
 
 int _nearestMinuteInterval(int minute) {
@@ -2586,8 +2597,9 @@ Future<void> showDailyTimeLimitPicker(
   required int? initialMinutes,
   required ValueChanged<int?> onTimeLimitSelected,
 }) async {
-  final resolvedInitialMinutes =
-      initialMinutes != null && initialMinutes > 0 ? initialMinutes : 0;
+  final resolvedInitialMinutes = initialMinutes != null && initialMinutes > 0
+      ? initialMinutes
+      : 0;
   var selectedHour = (resolvedInitialMinutes ~/ 60).clamp(0, 23);
   var selectedMinute = _nearestMinuteInterval(resolvedInitialMinutes % 60);
   final hourController = FixedExtentScrollController(
@@ -2780,9 +2792,7 @@ String _formatMinutes(int? minutes) {
   }
   final hours = minutes ~/ 60;
   final remainingMinutes = minutes % 60;
-  final parts = <String>[
-    hours == 1 ? '1 hr' : '$hours hrs',
-  ];
+  final parts = <String>[hours == 1 ? '1 hr' : '$hours hrs'];
   if (remainingMinutes > 0) {
     parts.add(remainingMinutes == 1 ? '1 min' : '$remainingMinutes mins');
   }

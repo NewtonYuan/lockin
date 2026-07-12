@@ -26,11 +26,16 @@ class StatisticsHistoryStore {
     }
   }
 
-  Future<StatisticsSnapshot> mergeAndSave(StatisticsSnapshot freshSnapshot) async {
+  Future<StatisticsSnapshot> mergeAndSave(
+    StatisticsSnapshot freshSnapshot,
+  ) async {
     final storedSnapshot = await loadSnapshot();
     final mergedSnapshot = _mergeSnapshots(storedSnapshot, freshSnapshot);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_storageKey, jsonEncode(_snapshotToMap(mergedSnapshot)));
+    await prefs.setString(
+      _storageKey,
+      jsonEncode(_snapshotToMap(mergedSnapshot)),
+    );
     return mergedSnapshot;
   }
 
@@ -38,7 +43,10 @@ class StatisticsHistoryStore {
     StatisticsSnapshot? storedSnapshot,
     StatisticsSnapshot freshSnapshot,
   ) {
-    final mergedDaily = _mergeDaily(storedSnapshot?.daily ?? const [], freshSnapshot.daily);
+    final mergedDaily = _mergeDaily(
+      storedSnapshot?.daily ?? const [],
+      freshSnapshot.daily,
+    );
     final mergedApps = _buildApps(
       mergedDaily: mergedDaily,
       generatedAt: freshSnapshot.generatedAt,
@@ -98,15 +106,25 @@ class StatisticsHistoryStore {
       (sum, day) => sum + (day?.trackedMinutes ?? 0),
     );
     final todayBypassMinutes =
-        today?.appBypassedMinutes.values.fold<int>(0, (sum, value) => sum + value) ?? 0;
+        today?.appBypassedMinutes.values.fold<int>(
+          0,
+          (sum, value) => sum + value,
+        ) ??
+        0;
     final weekBypassMinutes = last7.fold<int>(
       0,
       (sum, day) =>
-          sum + (day?.appBypassedMinutes.values.fold<int>(0, (inner, value) => inner + value) ?? 0),
+          sum +
+          (day?.appBypassedMinutes.values.fold<int>(
+                0,
+                (inner, value) => inner + value,
+              ) ??
+              0),
     );
     final mostUsedTodayApp = apps.fold<StatisticsApp?>(
       null,
-      (best, app) => best == null || app.todayMinutes > best.todayMinutes ? app : best,
+      (best, app) =>
+          best == null || app.todayMinutes > best.todayMinutes ? app : best,
     );
 
     return StatisticsOverview(
@@ -122,7 +140,8 @@ class StatisticsHistoryStore {
       currentStreak: fallback.currentStreak,
       longestStreak: fallback.longestStreak,
       mostUsedAppName: mostUsedTodayApp?.appName ?? fallback.mostUsedAppName,
-      mostUsedAppMinutes: mostUsedTodayApp?.todayMinutes ?? fallback.mostUsedAppMinutes,
+      mostUsedAppMinutes:
+          mostUsedTodayApp?.todayMinutes ?? fallback.mostUsedAppMinutes,
       blockedWebsitesCount: fallback.blockedWebsitesCount,
     );
   }
@@ -131,13 +150,19 @@ class StatisticsHistoryStore {
     return StatisticsProtection(
       reelsBlocks: daily.fold<int>(0, (sum, day) => sum + day.reelsBlocks),
       shortsBlocks: daily.fold<int>(0, (sum, day) => sum + day.shortsBlocks),
-      spotlightBlocks: daily.fold<int>(0, (sum, day) => sum + day.spotlightBlocks),
+      spotlightBlocks: daily.fold<int>(
+        0,
+        (sum, day) => sum + day.spotlightBlocks,
+      ),
       websiteBlocks: daily.fold<int>(0, (sum, day) => sum + day.websiteBlocks),
       pauseOnOpenPrompts: daily.fold<int>(
         0,
         (sum, day) => sum + day.pauseOnOpenPrompts,
       ),
-      dailyLimitHits: daily.fold<int>(0, (sum, day) => sum + day.dailyLimitHits),
+      dailyLimitHits: daily.fold<int>(
+        0,
+        (sum, day) => sum + day.dailyLimitHits,
+      ),
       totalBlocks: daily.fold<int>(0, (sum, day) => sum + day.blocks),
       shortFormBypasses: daily.fold<int>(
         0,
@@ -198,82 +223,87 @@ class StatisticsHistoryStore {
     final last30 = _daysForRange(mergedDaily, generatedAt, 30);
     final today = _dayForDate(mergedDaily, generatedAt);
 
-    final apps = allAppIds.map((appId) {
-      final metadata = metadataById[appId];
-      final daySeries30 = last30
-          .map((day) => day?.appMinutes[appId] ?? 0)
-          .toList(growable: false);
-      return StatisticsApp(
-        id: appId,
-        appName: metadata?.appName.isNotEmpty == true ? metadata!.appName : appId,
-        packageName: metadata?.packageName.isNotEmpty == true
-            ? metadata!.packageName
-            : appId,
-        iconBytes: null,
-        todayMinutes: today?.appMinutes[appId] ?? 0,
-        weekMinutes: last7.fold<int>(
-          0,
-          (sum, day) => sum + (day?.appMinutes[appId] ?? 0),
-        ),
-        averageDailyMinutes7d: last7.fold<int>(
-              0,
-              (sum, day) => sum + (day?.appMinutes[appId] ?? 0),
-            ) /
-            7,
-        highestDayMinutes30d: daySeries30.fold<int>(
-          0,
-          (maxValue, minutes) => minutes > maxValue ? minutes : maxValue,
-        ),
-        launchCountToday: today?.appSessionCounts[appId] ?? 0,
-        launchCountWeek: last7.fold<int>(
-          0,
-          (sum, day) => sum + (day?.appSessionCounts[appId] ?? 0),
-        ),
-        longestSessionMinutes30d: last30.fold<int>(
-          0,
-          (maxValue, day) {
-            final minutes = day?.appLongestSessionMinutes[appId] ?? 0;
-            return minutes > maxValue ? minutes : maxValue;
-          },
-        ),
-        reelsBlocks: mergedDaily.fold<int>(
-          0,
-          (sum, day) => sum + (day.appReelsBlocks[appId] ?? 0),
-        ),
-        shortsBlocks: mergedDaily.fold<int>(
-          0,
-          (sum, day) => sum + (day.appShortsBlocks[appId] ?? 0),
-        ),
-        spotlightBlocks: mergedDaily.fold<int>(
-          0,
-          (sum, day) => sum + (day.appSpotlightBlocks[appId] ?? 0),
-        ),
-        pauseOnOpenPrompts: mergedDaily.fold<int>(
-          0,
-          (sum, day) => sum + (day.appPauseOnOpenPrompts[appId] ?? 0),
-        ),
-        dailyLimitHits: mergedDaily.fold<int>(
-          0,
-          (sum, day) => sum + (day.appDailyLimitHits[appId] ?? 0),
-        ),
-        bypasses: mergedDaily.fold<int>(
-          0,
-          (sum, day) => sum + (day.appBypasses[appId] ?? 0),
-        ),
-        bypassedMinutes: mergedDaily.fold<int>(
-          0,
-          (sum, day) => sum + (day.appBypassedMinutes[appId] ?? 0),
-        ),
-        dailyMinutes30d: daySeries30,
-      );
-    }).where((app) {
-      return mergedDaily.fold<int>(
-            0,
-            (sum, day) => sum + (day.appMinutes[app.id] ?? 0),
-          ) >
-          0;
-    }).toList()
-      ..sort((a, b) => b.weekMinutes.compareTo(a.weekMinutes));
+    final apps =
+        allAppIds
+            .map((appId) {
+              final metadata = metadataById[appId];
+              final daySeries30 = last30
+                  .map((day) => day?.appMinutes[appId] ?? 0)
+                  .toList(growable: false);
+              return StatisticsApp(
+                id: appId,
+                appName: metadata?.appName.isNotEmpty == true
+                    ? metadata!.appName
+                    : appId,
+                packageName: metadata?.packageName.isNotEmpty == true
+                    ? metadata!.packageName
+                    : appId,
+                iconBytes: null,
+                todayMinutes: today?.appMinutes[appId] ?? 0,
+                weekMinutes: last7.fold<int>(
+                  0,
+                  (sum, day) => sum + (day?.appMinutes[appId] ?? 0),
+                ),
+                averageDailyMinutes7d:
+                    last7.fold<int>(
+                      0,
+                      (sum, day) => sum + (day?.appMinutes[appId] ?? 0),
+                    ) /
+                    7,
+                highestDayMinutes30d: daySeries30.fold<int>(
+                  0,
+                  (maxValue, minutes) =>
+                      minutes > maxValue ? minutes : maxValue,
+                ),
+                launchCountToday: today?.appSessionCounts[appId] ?? 0,
+                launchCountWeek: last7.fold<int>(
+                  0,
+                  (sum, day) => sum + (day?.appSessionCounts[appId] ?? 0),
+                ),
+                longestSessionMinutes30d: last30.fold<int>(0, (maxValue, day) {
+                  final minutes = day?.appLongestSessionMinutes[appId] ?? 0;
+                  return minutes > maxValue ? minutes : maxValue;
+                }),
+                reelsBlocks: mergedDaily.fold<int>(
+                  0,
+                  (sum, day) => sum + (day.appReelsBlocks[appId] ?? 0),
+                ),
+                shortsBlocks: mergedDaily.fold<int>(
+                  0,
+                  (sum, day) => sum + (day.appShortsBlocks[appId] ?? 0),
+                ),
+                spotlightBlocks: mergedDaily.fold<int>(
+                  0,
+                  (sum, day) => sum + (day.appSpotlightBlocks[appId] ?? 0),
+                ),
+                pauseOnOpenPrompts: mergedDaily.fold<int>(
+                  0,
+                  (sum, day) => sum + (day.appPauseOnOpenPrompts[appId] ?? 0),
+                ),
+                dailyLimitHits: mergedDaily.fold<int>(
+                  0,
+                  (sum, day) => sum + (day.appDailyLimitHits[appId] ?? 0),
+                ),
+                bypasses: mergedDaily.fold<int>(
+                  0,
+                  (sum, day) => sum + (day.appBypasses[appId] ?? 0),
+                ),
+                bypassedMinutes: mergedDaily.fold<int>(
+                  0,
+                  (sum, day) => sum + (day.appBypassedMinutes[appId] ?? 0),
+                ),
+                dailyMinutes30d: daySeries30,
+              );
+            })
+            .where((app) {
+              return mergedDaily.fold<int>(
+                    0,
+                    (sum, day) => sum + (day.appMinutes[app.id] ?? 0),
+                  ) >
+                  0;
+            })
+            .toList()
+          ..sort((a, b) => b.weekMinutes.compareTo(a.weekMinutes));
 
     return apps;
   }
@@ -388,6 +418,7 @@ class StatisticsHistoryStore {
     return {
       'dateKey': day.dateKey,
       'trackedMinutes': day.trackedMinutes,
+      'hourlyTrackedMinutes': day.hourlyTrackedMinutes,
       'blocks': day.blocks,
       'bypasses': day.bypasses,
       'reelsBlocks': day.reelsBlocks,
@@ -403,6 +434,7 @@ class StatisticsHistoryStore {
       'sessionCount': day.sessionCount,
       'longestSessionMinutes': day.longestSessionMinutes,
       'appMinutes': day.appMinutes,
+      'appHourlyTrackedMinutes': day.appHourlyTrackedMinutes,
       'appSessionCounts': day.appSessionCounts,
       'appLongestSessionMinutes': day.appLongestSessionMinutes,
       'appReelsBlocks': day.appReelsBlocks,
